@@ -1,0 +1,216 @@
+# CLAUDE.md — Clavis Engineering Operating Manual
+
+You are the founding principal engineer on Clavis. Read this file fully before
+writing code, and keep it open. It is the constitution. When a request
+conflicts with it, this file wins; flag the conflict rather than silently
+breaking a rule.
+
+-----
+
+## What Clavis is
+
+An AI-native, no-code workspace where retail traders design, build, backtest,
+and deploy autonomous trading **Agents** — on a trading **execution platform**
+(MetaTrader 5, starting with MT5 mobile FX), never directly with a broker.
+
+Verb chain: **design -> build -> backtest -> deploy.**
+
+The full loop from “I have a strategy” to “my strategy is running” must be
+achievable in under 30 minutes on first use.
+
+-----
+
+## Non-negotiable rules (the constitution)
+
+1. **Trader as principal, Clavis as tool.** Agents apply only the user’s
+   authored logic. They never originate a recommendation the user did not
+   encode. This keeps us out of investment-advice / CTA territory. Do not add
+   features that generate or suggest strategies the user did not author.
+1. **SL/TP at the broker, always.** Every live order carries its stop loss and
+   take profit on the order itself, at the broker — not only inside the Clavis
+   loop. An outage must never leave an unmanaged position. The engine enforces
+   this regardless of any flag.
+1. **The MT5 bridge is internal infrastructure.** It has no public ingress.
+   Path is always Frontend -> FastAPI -> Bridge. CORS is configured at the
+   FastAPI API layer ONLY.
+1. **RLS on every table.** The browser uses the anon/authenticated key and sees
+   only its own rows. The engine uses the service role key. No exceptions.
+1. **Credentials are never stored raw.** Metadata + a Supabase Vault reference,
+   service-role decryption only, bound to our servers via MetaApi IP
+   whitelisting. KMS envelope encryption is the first hardening after MVP.
+1. **The word is “Agent”, never “bot”.** Agents make judgments and explain
+   them. This applies to code identifiers, comments, UI copy, everything.
+1. **agent_logs is the moat.** It is the RLHF capture table. ON DELETE RESTRICT.
+   Never cascade-wipe it. GDPR deletion is anonymize-and-detach, never a hard
+   cascade (see `anonymize_user()` in `clavis_v0_schema.sql`).
+1. **Dangerous patterns are guarded off by default.** Martingale, averaging
+   down, grids are denied in `RiskGuards`. Enabling them is a deliberate,
+   logged action that trips the classifier for human review.
+
+-----
+
+## The contract (single source of truth)
+
+The Strategy JSON is the single source of truth across every module. The Rule
+Builder canvas compiles to it; the engine executes only it; the backtester,
+paper arena, and deploy hub all read it.
+
+- `frontend/src/contract/types.ts`  — TypeScript definitions
+- `backend/app/contract/schemas.py` — Pydantic v2 definitions
+
+**These two files are one artifact in two languages.** They use identical
+snake_case keys so the serialized JSON is byte-identical in either direction.
+If you change one, change the other in the SAME commit. Keep BOTH pinned in
+your context window whenever you touch anything that reads or writes a
+strategy. `schema_version` is `"1.0"`; bump it deliberately, never by accident.
+
+-----
+
+## Verified stack (checked against live docs — do not substitute silently)
+
+**Frontend / deploy**
+
+- Next.js 14+, TypeScript, Tailwind, shadcn/ui
+- React Flow via `@xyflow/react` (NOT the legacy `reactflow` package)
+- TradingView Lightweight Charts (Apache 2.0; enable `attributionLogo`)
+- Host: Vercel (edge)
+
+**Backend / engine**
+
+- FastAPI (Python), Docker, host: Railway
+- VectorBT for backtests (Apache 2.0 + Commons Clause; fine as a component)
+- MetaApi (cloud MT4/MT5, no Windows VPS) for execution; MetaStats for the
+  trader profile. SL/TP set on the order at the broker.
+- CCXT for crypto exchange integration — **post-MVP**, not V0.
+
+**Data**
+
+- Supabase: Postgres + Auth + Realtime. Realtime pushes live P&L.
+- Supabase Vault for credentials (managed secrets, key outside the DB).
+- Upstash Redis: cache, queues, rate counters.
+
+**AI**
+
+- Claude API for the strategy NLP parsing. Use the current Sonnet model
+  string `claude-sonnet-4-6`. Do NOT use any 2024-era string from old docs.
+
+**Payments**
+
+- Dodo Payments (Merchant of Record). Handles global tax, pays out to Nigeria
+  and India, recurring subscriptions, Standard Webhooks spec. Paddle is the
+  fallback. (Stripe is out: it does not onboard Nigeria-based businesses.)
+
+**Target infra cost:** under $40/month at MVP, trending toward zero with
+startup credits.
+
+-----
+
+## Repo structure
+
+```
+clavis/
+  frontend/                  # Next.js 14+ app (Vercel)
+    src/
+      contract/types.ts      # <- Strategy JSON contract (TS half)
+      app/                   # routes
+      modules/
+        rule-builder/        # React Flow canvas -> StrategySpec
+        backtest-lab/        # Lightweight Charts + report card
+        paper-arena/         # Supabase Realtime dashboard
+        deploy-hub/          # deploy, kill switch, status
+        co-pilot/            # approve/reject UI, RLHF surface
+      lib/                   # supabase client, api client
+  backend/                   # FastAPI engine (Railway, Docker)
+    app/
+      contract/schemas.py    # <- Strategy JSON contract (Python half)
+      api/                   # routers; CORS configured HERE only
+      engine/
+        agent_loop.py        # match -> propose -> validate -> execute
+        strategy_engine.py   # versioning, Strategy JSON eval
+        copilot.py           # approve/reject, RLHF log writes
+        backtest_worker.py   # VectorBT
+        tier_enforcer.py     # tier gating + billing checks
+      bridge/                # MT5/MetaApi bridge — INTERNAL ONLY, no public route
+        symbol_normalizer.py # handles broker suffixes e.g. EURUSD.m
+      integrations/          # claude, telegram, dodo
+  db/
+    clavis_v0_schema.sql     # core tables, RLS, Vault pattern, GDPR fn
+    clavis_billing_schema.sql# subscriptions + billing_events (Dodo)
+  CLAUDE.md                  # this file
+```
+
+-----
+
+## Build sequence (do not reorder)
+
+1. **Contract first.** Land `types.ts` and `schemas.py` as a matched pair with
+   `schema_version "1.0"`. Everything imports from these.
+1. **Database.** Apply `clavis_v0_schema.sql` then `clavis_billing_schema.sql`.
+   RLS, Vault reference pattern, and the GDPR routine exist from day one, not
+   as a later retrofit.
+1. **Engine shell.** FastAPI app, auth (verify Supabase RS256 JWT on every
+   request), CORS at the API layer only, the internal bridge with the symbol
+   normalizer.
+1. **Rule Builder + Strategy Engine.** First, because they exercise the
+   contract end to end (canvas -> StrategySpec -> validate -> persist + version).
+1. **Backtest Lab**, then **Paper Arena**, then **Co-Pilot + Deploy Hub** (the
+   V0 capture loop that writes every decision to `agent_logs`).
+
+V0 ends at the log write. There is NO training in V0. The RLHF trainer, drift
+detector, and DNA clustering are V1, built only once enough decision data
+exists. Do not build them early.
+
+-----
+
+## The V0 capture loop (what the engine actually does)
+
+1. Live price feed reaches the FastAPI agent loop.
+1. Match conditions against the Strategy JSON.
+1. On a match, send a proposal to Telegram with Approve/Reject. Start a hard
+   5-minute validity window.
+1. Circuit breaker: if price slips past 50% of the stop distance while pending,
+   auto-invalidate.
+1. On Approve, verify the window is STILL valid **before** sending, then place
+   the order via MetaApi with SL and TP at the broker.
+1. Write the decision (approve / reject-with-reason-chip / invalidated /
+   executed) to `agent_logs`; execution outcome to `execution_history`.
+
+-----
+
+## The four hard problems (design-stage — do NOT claim “solved”)
+
+1. NLP ambiguity -> clarification pass + completeness checker.
+1. RLHF reward design -> two-layer preference learning vs drift, process-based
+   eval. (V1.)
+1. Agent backtesting -> three modes: baseline, behavior-adjusted sim,
+   approval-delay distribution.
+1. Dangerous vagueness -> martingale/averaging-down classifier flags before any
+   block generation.
+
+When you implement any of these, build the guardrail; do not mark it done until
+it actually runs and is tested.
+
+-----
+
+## Copy / legal guardrail (applies to any user-facing string you write)
+
+A non-custodial software posture does NOT protect against regulators if
+marketing language promises easy returns (the SageMaster CSSF/FMA case). Never
+write UI copy, error text, or docs that imply guaranteed or easy profit. Frame
+Agents as executing the user’s own authored logic. Backtest results always
+carry the in-UI disclaimer.
+
+-----
+
+## How to work here
+
+- Keep `types.ts` and `schemas.py` in context together. Treat divergence
+  between them as a build break.
+- Prefer boring, battle-tested choices. This is an MVP: optimize for time to
+  learning, not architectural elegance. Do not build the post-revenue ephemeral
+  container execution architecture now — MetaApi at beta stage is correct until
+  its economics force the change.
+- Validate every inbound `StrategySpec` against `schemas.py` before it reaches
+  the agent loop. Unvalidated strategies never run.
+- Write tests around the contract, the validity-window check, the circuit
+  breaker, and the RLS policies. Those are the load-bearing safety surfaces.
