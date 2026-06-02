@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest==9.0.3
+# DB-backed tests (test_rls.py, test_strategy_engine.py) need a Postgres with the
+# Clavis schema applied, pointed to via TEST_DATABASE_URL; otherwise they skip.
+psycopg[binary]==3.3.4
