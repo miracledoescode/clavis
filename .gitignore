@@ -1,0 +1,41 @@
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.so
+
+# ---- Virtualenv ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Env files ----
+# Real secrets never get committed. The *.env.example templates ARE tracked
+# (they do not match the patterns below).
+.env
+.env*.local
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
