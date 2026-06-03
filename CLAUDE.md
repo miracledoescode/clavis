@@ -237,6 +237,63 @@ key schema is documented there).
 
 -----
 
+## Execution mode fits timeframe
+
+Co-Pilot (semi-auto, per-trade human approval) fits HIGHER-timeframe and swing
+setups, where approval latency is small relative to stop distance. The approve/
+reject loop is realistically 5 to 30+ seconds end to end.
+
+On low-timeframe / tight-stop setups (scalping), that latency means the circuit
+breaker (invalidate past 50% of the stop distance) fires before the human can
+approve. Co-Pilot is therefore the WRONG mode for scalping — this is correct
+behaviour, not a bug.
+
+Scalping requires **Full Auto** (no human in the execution path). Full Auto is
+the highest-liability mode and is **OUT OF V0**. It is a post-validation
+capability with its own hardening bar: per-minute execution caps, a latency
+budget, fat-finger guards, and a kill switch tested under load. Do not build
+Full Auto in V0.
+
+V0 supports Co-Pilot for higher-timeframe / swing / intraday only. Scalpers are
+welcome as users; their fit is Full Auto, which comes later.
+
+Rationale (record it): Co-Pilot's approve/reject IS the RLHF signal that feeds
+V1. Full Auto logs outcomes but not preference data. Leaning V0 on Co-Pilot
+maximizes the moat data.
+
+**Co-Pilot suitability warning (Rule Builder requirement).** When a setup's entry
+timeframe and stop distance imply approval latency would routinely trip the
+circuit breaker, the Rule Builder MUST flag the strategy as unsuitable for
+Co-Pilot and explain why — framed as "needs Full Auto, post-V0", never as a
+defect. Computed purely from the setup's entry timeframe and stop distance, both
+already in the StrategySpec. The pure check is
+`engine/copilot_suitability.py::assess_copilot_suitability(...)`; its latency
+assumption and circuit-breaker fraction are documented, configurable constants
+(the fraction defaults to 0.5, matching `ExecutionSpec`). Only the pure check
+exists now; the UI surface is built in slice 4.
+
+-----
+
+## DNA Engine data gate (V1)
+
+The DNA Engine (ML archetype clustering) is V1 and must not ship without a
+minimum data gate. Below the gate, do NOT surface archetypes at all. Build
+nothing for it now — this records the constraint.
+
+Distinguish clearly:
+- **Trader Profile** = descriptive MetaStats. V0, valid at ANY sample size.
+- **DNA Engine** = ML clustering into archetypes. V1, GATED.
+
+Gate: a configurable minimum of closed trades (default **300**; a heuristic
+floor, not a statistical law). Below it, show the descriptive profile plus a
+"connect more history to unlock DNA" state — never a half-formed archetype.
+
+Even above the gate, archetypes are presented as TENDENCIES with explicit
+uncertainty, never as a guaranteed edge (legal posture: no promises — see the
+Copy / legal guardrail).
+
+-----
+
 ## The four hard problems (design-stage — do NOT claim “solved”)
 
 1. NLP ambiguity -> clarification pass + completeness checker.
