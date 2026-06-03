@@ -11,8 +11,9 @@
  *  - snake_case keys everywhere, so the serialized JSON is byte-identical
  *    whether produced by the frontend or the Python engine. No camel<->snake
  *    mapping layer to drift.
- *  - A strategy describes the FULL trade lifecycle (entry, exit, filters,
- *    risk, execution), not just entries.
+ *  - A strategy is one or more SETUPS — single-direction checklists. Each setup
+ *    owns its entry checklist, exit, filters, and per-trade risk; the strategy
+ *    owns instrument, timeframes, execution, and account/session/guard risk.
  *  - Conditions are a tree of logical groups so the React Flow canvas maps
  *    cleanly onto the JSON.
  *  - Dangerous patterns (martingale, averaging down) are NOT first-class.
@@ -52,7 +53,8 @@ export type Timeframe =
   | "H1" | "H4"
   | "D1" | "W1" | "MN1";
 
-export type Direction = "long" | "short" | "both";
+/** Exactly one side per setup; "both" is never a setup direction. */
+export type SetupDirection = "long" | "short";
 
 /**
  * Multi-timeframe roles. A strategy reasons across a higher-timeframe bias,
@@ -130,6 +132,7 @@ export type LogicalOperator = "all" | "any";
 
 export interface ConditionGroup {
   operator: LogicalOperator;
+  /** Non-empty: an empty checklist is rejected by the backend contract. */
   children: Array<Condition | ConditionGroup>;
 }
 
@@ -154,15 +157,8 @@ export interface Confluence {
 }
 
 /* ----------------------------------------------------------------------- */
-/* Entry / Exit                                                            */
+/* Exit                                                                    */
 /* ----------------------------------------------------------------------- */
-
-export interface EntrySpec {
-  /** Hard entry conditions (always required). */
-  conditions: ConditionGroup;
-  /** Optional weighted confluence layer on top of the hard conditions. */
-  confluence?: Confluence | null;
-}
 
 export type StopModel = "fixed_pips" | "atr" | "structure";
 
@@ -284,7 +280,7 @@ export interface RiskGuards {
 }
 
 export interface RiskSpec {
-  per_trade: PerTradeRisk;
+  /** Strategy-level caps across all setups. Per-trade risk lives on each Setup. */
   session?: SessionRisk | null;
   account?: AccountRisk | null;
   guards: RiskGuards;
@@ -320,6 +316,26 @@ export interface ExecutionSpec {
 }
 
 /* ----------------------------------------------------------------------- */
+/* Setup  (a single-direction checklist; the trade follows from it)        */
+/* ----------------------------------------------------------------------- */
+
+export interface Setup {
+  name: string;
+  /**
+   * Exactly one side. The parser may PROPOSE this from the checklist, but it is
+   * never finalized until the user confirms it in the Rule Builder.
+   */
+  direction: SetupDirection;
+  /** The checklist of what must be true for this setup to trigger. */
+  entry: ConditionGroup;
+  confluence?: Confluence | null;
+  /** Sessions / news / time filters live WITH the setup that uses them. */
+  filters?: Filters | null;
+  exit: ExitSpec;
+  per_trade_risk: PerTradeRisk;
+}
+
+/* ----------------------------------------------------------------------- */
 /* Top-level StrategySpec                                                  */
 /* ----------------------------------------------------------------------- */
 
@@ -339,11 +355,11 @@ export interface StrategySpec {
 
   instrument: Instrument;
   timeframes: Timeframes;
-  direction: Direction;
+  /** One or more setups. Each carries its own direction, checklist, filters,
+   * exit, and per-trade risk. */
+  setups: Setup[];
 
-  entry: EntrySpec;
-  exit: ExitSpec;
-  filters: Filters;
+  /** Strategy-level risk: session/account caps + default-deny guards. */
   risk: RiskSpec;
   execution: ExecutionSpec;
 
@@ -370,7 +386,7 @@ export type RejectReasonChip =
 export interface AgentProposal {
   strategy_id: string;
   symbol: string;
-  direction: Exclude<Direction, "both">;
+  direction: SetupDirection;
   entry_price: number;
   stop_loss_price: number;
   take_profit_prices: number[];

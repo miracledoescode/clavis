@@ -64,6 +64,19 @@ If you change one, change the other in the SAME commit. Keep BOTH pinned in
 your context window whenever you touch anything that reads or writes a
 strategy. `schema_version` is `"1.0"`; bump it deliberately, never by accident.
 
+**Canonical 1.0 shape is SETUPS.** A trader authors a checklist of what must be
+true, and the side follows — they do not author "buy X when". So a `StrategySpec`
+is one or more `setups` (minimum 1). Each `Setup` is a single-direction checklist:
+`{ name, direction (long|short, never "both"), entry: ConditionGroup, confluence?,
+filters?, exit, per_trade_risk }`. The strategy holds `instrument`, `timeframes`,
+`setups`, `execution`, `metadata`, `version`, and a strategy-level `risk` of only
+`{ session?, account?, guards }` (caps + the default-deny guards, applied across
+all setups). There is NO top-level `direction`/`entry`/`exit` and no top-level
+per-trade risk. No production strategies were ever persisted, so this setups shape
+**is** `schema_version "1.0"` — no migration. Direction guardrail: the parser may
+PROPOSE a setup's side but never finalizes an inferred direction; the user confirms
+every setup's direction before a spec is considered authored.
+
 -----
 
 ## Verified stack (checked against live docs — do not substitute silently)

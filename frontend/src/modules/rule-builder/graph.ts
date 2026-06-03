@@ -1,19 +1,21 @@
 import type { Edge, Node } from "@xyflow/react";
 
-import type { Condition, ConditionGroup, StrategySpec } from "@/contract/types";
+import type {
+  Condition,
+  ConditionGroup,
+  ExitSpec,
+  PerTradeRisk,
+  StrategySpec,
+} from "@/contract/types";
 
 export type NodeKind =
   | "strategy"
   | "instrument"
   | "timeframes"
-  | "direction"
+  | "guards"
   | "group"
   | "condition"
-  | "stop_loss"
-  | "take_profit"
-  | "risk"
-  | "guards"
-  | "filters";
+  | "setup";
 
 /** Node payload. The index signature satisfies @xyflow/react's Node<T> constraint. */
 export type NodeData = {
@@ -60,7 +62,27 @@ function isGroup(x: Condition | ConditionGroup): x is ConditionGroup {
   return typeof (x as ConditionGroup).operator === "string" && Array.isArray((x as ConditionGroup).children);
 }
 
-/** Derive a React Flow graph from a StrategySpec. The canvas is a view of the JSON. */
+function exitSummary(exit: ExitSpec): string {
+  const sl = exit.stop_loss;
+  const tps = exit.take_profit
+    .map((t) => `${t.value}${t.model === "rr" ? "R" : ` ${t.model}`}`)
+    .join(", ");
+  return `Stop ${sl.model} ${sl.value}${sl.atr_period ? `/${sl.atr_period}` : ""} · TP ${tps || "—"}`;
+}
+
+function riskSummary(r: PerTradeRisk): string {
+  return `Risk ${r.value}${r.model === "fixed_percent" ? "%" : ` (${r.model})`}`;
+}
+
+function countLeaves(g: ConditionGroup): number {
+  return g.children.reduce((n, c) => n + (isGroup(c) ? countLeaves(c) : 1), 0);
+}
+
+/**
+ * Derive a React Flow graph from a StrategySpec. The canvas is a VIEW of the JSON.
+ * Each setup is a Setup node fed by its checklist (condition nodes -> group ->
+ * setup). Multiple setups render as multiple bands.
+ */
 export function specToGraph(spec: StrategySpec): { nodes: SpecNode[]; edges: Edge[] } {
   const nodes: SpecNode[] = [];
   const edges: Edge[] = [];
@@ -68,13 +90,12 @@ export function specToGraph(spec: StrategySpec): { nodes: SpecNode[]; edges: Edg
     nodes.push({ id, position: { x, y }, data });
   const link = (a: string, b: string) => edges.push({ id: `${a}->${b}`, source: a, target: b });
 
-  add("strategy", { label: spec.name || "Strategy", kind: "strategy", path: ["name"] }, 0, 300);
-
+  add("strategy", { label: spec.name || "Strategy", kind: "strategy", path: [] }, 0, 0);
   add(
     "instrument",
     { label: `${spec.instrument.symbol} · ${spec.instrument.asset_class}`, kind: "instrument", path: ["instrument"] },
-    280,
-    0,
+    260,
+    -90,
   );
   add(
     "timeframes",
@@ -83,75 +104,74 @@ export function specToGraph(spec: StrategySpec): { nodes: SpecNode[]; edges: Edg
       kind: "timeframes",
       path: ["timeframes"],
     },
-    280,
-    80,
+    260,
+    -10,
   );
-  add("direction", { label: `Direction: ${spec.direction}`, kind: "direction", path: ["direction"] }, 280, 160);
+  add(
+    "guards",
+    { label: "Guards: martingale / averaging-down / grid denied", kind: "guards", path: ["risk", "guards"] },
+    260,
+    70,
+  );
   link("strategy", "instrument");
   link("strategy", "timeframes");
-  link("strategy", "direction");
+  link("strategy", "guards");
 
-  // Entry condition tree (recursive).
-  let row = 0;
-  const layout = (group: ConditionGroup, path: (string | number)[], parentId: string, depth: number) => {
-    const gid = `g:${path.join(".")}`;
-    add(gid, { label: `${group.operator.toUpperCase()} (entry)`, kind: "group", path }, 280 + depth * 240, 280 + row * 64);
-    link(parentId, gid);
-    group.children.forEach((child, i) => {
-      const cpath = [...path, "children", i];
+  // Recursive checklist layout: conditions/groups flow INTO the sink (child -> parent).
+  const layout = (
+    group: ConditionGroup,
+    basePath: (string | number)[],
+    sinkId: string,
+    x: number,
+    startY: number,
+  ): number => {
+    const gid = `grp:${basePath.join(".")}`;
+    let y = startY;
+    const childCenters: number[] = [];
+    group.children.forEach((child, idx) => {
+      const cpath = [...basePath, "children", idx];
       if (isGroup(child)) {
-        layout(child, cpath, gid, depth + 1);
+        const c = layout(child, cpath, gid, x - 230, y);
+        childCenters.push(c);
+        y = c + 70;
       } else {
-        row += 1;
-        const cid = `c:${cpath.join(".")}`;
-        add(cid, { label: conditionLabel(child), kind: "condition", path: cpath }, 280 + (depth + 1) * 240, 280 + row * 64);
-        link(gid, cid);
+        const cid = `cnd:${cpath.join(".")}`;
+        add(cid, { label: conditionLabel(child), kind: "condition", path: cpath }, x - 230, y);
+        link(cid, gid);
+        childCenters.push(y);
+        y += 70;
       }
     });
-    row += 1;
+    const center = childCenters.length
+      ? (childCenters[0] + childCenters[childCenters.length - 1]) / 2
+      : startY;
+    add(gid, { label: group.operator.toUpperCase(), kind: "group", path: basePath }, x, center);
+    link(gid, sinkId);
+    return center;
   };
-  layout(spec.entry.conditions, ["entry", "conditions"], "strategy", 0);
 
-  // Exit.
-  const sl = spec.exit.stop_loss;
-  add(
-    "sl",
-    { label: `Stop: ${sl.model} ${sl.value}${sl.atr_period ? ` (ATR ${sl.atr_period})` : ""}`, kind: "stop_loss", path: ["exit", "stop_loss"] },
-    0,
-    470,
-  );
-  link("strategy", "sl");
-  spec.exit.take_profit.forEach((tp, i) => {
+  let bandY = 220;
+  spec.setups.forEach((setup, i) => {
+    const setupId = `setup:${i}`;
+    const center = layout(setup.entry, ["setups", i, "entry"], setupId, 360, bandY);
     add(
-      `tp${i}`,
-      { label: `TP${i + 1}: ${tp.model} ${tp.value} · ${tp.close_percent}%`, kind: "take_profit", path: ["exit", "take_profit", i] },
-      0,
-      540 + i * 64,
+      setupId,
+      {
+        label: setup.name,
+        kind: "setup",
+        path: ["setups", i],
+        index: i,
+        name: setup.name,
+        direction: setup.direction,
+        exitSummary: exitSummary(setup.exit),
+        riskSummary: riskSummary(setup.per_trade_risk),
+      },
+      640,
+      center,
     );
-    link("sl", `tp${i}`);
+    link("strategy", setupId);
+    bandY = Math.max(bandY + countLeaves(setup.entry) * 70 + 150, center + 200);
   });
-
-  // Risk.
-  const pt = spec.risk.per_trade;
-  add("risk", { label: `Risk: ${pt.model} ${pt.value}`, kind: "risk", path: ["risk", "per_trade"] }, 280, 470);
-  link("strategy", "risk");
-  add("guards", { label: "Guards: martingale / averaging-down / grid denied", kind: "guards", path: ["risk", "guards"] }, 280, 540);
-  link("risk", "guards");
-
-  // Filters (read-only summary).
-  const f = spec.filters ?? {};
-  const active = [
-    f.sessions?.enabled ? "sessions" : null,
-    f.news?.enabled ? "news" : null,
-    f.time?.enabled ? "time" : null,
-  ].filter(Boolean);
-  add(
-    "filters",
-    { label: active.length ? `Filters: ${active.join(", ")}` : "No filters", kind: "filters", path: ["filters"] },
-    280,
-    240,
-  );
-  link("strategy", "filters");
 
   return { nodes, edges };
 }
