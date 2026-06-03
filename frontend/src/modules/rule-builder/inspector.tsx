@@ -28,6 +28,7 @@ function get(spec: StrategySpec, path: (string | number)[]): unknown {
 /**
  * Edits the spec slice for the selected node. Every change writes straight back
  * to the StrategySpec (the single source of truth); the canvas re-derives from it.
+ * Direction is NOT edited here — it is confirmed/flipped on the Setup node itself.
  */
 export function Inspector({
   spec,
@@ -49,28 +50,29 @@ export function Inspector({
 
   const { kind, path } = selected;
   const node = (get(spec, path) ?? {}) as Record<string, unknown>;
+  const cur = (sub: (string | number)[]) => get(spec, [...path, ...sub]);
   const set = (sub: (string | number)[], value: unknown) =>
     onChange(setAtPath(spec, [...path, ...sub], value));
   const numOrNull = (v: string) => (v === "" ? null : Number(v));
 
-  const text = (label: string, sub: (string | number)[], value: unknown) => (
+  const text = (label: string, sub: (string | number)[]) => (
     <Field label={label}>
-      <input className={inputCls} value={String(value ?? "")} onChange={(e) => set(sub, e.target.value)} />
+      <input className={inputCls} value={String(cur(sub) ?? "")} onChange={(e) => set(sub, e.target.value)} />
     </Field>
   );
-  const number = (label: string, sub: (string | number)[], value: unknown) => (
+  const number = (label: string, sub: (string | number)[]) => (
     <Field label={label}>
       <input
         type="number"
         className={inputCls}
-        value={value == null ? "" : String(value)}
+        value={cur(sub) == null ? "" : String(cur(sub))}
         onChange={(e) => set(sub, numOrNull(e.target.value))}
       />
     </Field>
   );
-  const choose = (label: string, sub: (string | number)[], value: unknown, options: string[]) => (
+  const choose = (label: string, sub: (string | number)[], options: string[]) => (
     <Field label={label}>
-      <select className={inputCls} value={String(value ?? "")} onChange={(e) => set(sub, e.target.value)}>
+      <select className={inputCls} value={String(cur(sub) ?? "")} onChange={(e) => set(sub, e.target.value)}>
         {options.map((o) => (
           <option key={o} value={o}>
             {o}
@@ -82,68 +84,56 @@ export function Inspector({
 
   return (
     <div>
-      <h3 className="mb-3 text-sm font-semibold capitalize">{kind.replace("_", " ")}</h3>
+      <h3 className="mb-3 text-sm font-semibold capitalize">{kind.replace(/_/g, " ")}</h3>
 
-      {kind === "strategy" && text("Name", [], spec.name)}
+      {kind === "strategy" && text("Name", ["name"])}
 
       {kind === "instrument" && (
         <>
-          {text("Symbol", ["symbol"], node.symbol)}
-          {choose("Asset class", ["asset_class"], node.asset_class, ["forex", "metal", "index_cfd"])}
+          {text("Symbol", ["symbol"])}
+          {choose("Asset class", ["asset_class"], ["forex", "metal", "index_cfd"])}
         </>
       )}
 
-      {kind === "timeframes" && choose("Entry timeframe", ["entry"], node.entry, TIMEFRAMES)}
+      {kind === "timeframes" && choose("Entry timeframe", ["entry"], TIMEFRAMES)}
 
-      {kind === "direction" && choose("Direction", [], spec.direction, ["long", "short", "both"])}
+      {kind === "guards" && (
+        <p className="text-sm text-muted-foreground">
+          Martingale, averaging-down, and grid are denied by default and stay locked across all setups.
+        </p>
+      )}
 
       {kind === "condition" && node.kind === "indicator" && (
         <>
-          {text("Indicator", ["indicator"], node.indicator)}
-          {choose("Comparator", ["comparator"], node.comparator, [
+          {text("Indicator", ["indicator"])}
+          {choose("Comparator", ["comparator"], [
             "gt", "gte", "lt", "lte", "eq", "crosses_above", "crosses_below",
           ])}
-          {number("Value", ["value"], node.value)}
-          {text("Reference series", ["reference"], node.reference)}
+          {number("Value", ["value"])}
+          {text("Reference series", ["reference"])}
         </>
       )}
       {kind === "condition" && node.kind !== "indicator" && (
         <p className="text-sm text-muted-foreground">{selected.label}</p>
       )}
 
-      {kind === "stop_loss" && (
+      {kind === "setup" && (
         <>
-          {choose("Model", ["model"], node.model, ["fixed_pips", "atr", "structure"])}
-          {number("Value", ["value"], node.value)}
-          {number("ATR period", ["atr_period"], node.atr_period)}
+          {text("Setup name", ["name"])}
+          <p className="mb-3 text-xs text-muted-foreground">
+            Direction is set with Confirm / Flip on the setup node.
+          </p>
+          {choose("Per-trade risk model", ["per_trade_risk", "model"], [
+            "fixed_percent", "fixed_amount", "atr_based",
+          ])}
+          {number("Per-trade risk value", ["per_trade_risk", "value"])}
+          {choose("Stop model", ["exit", "stop_loss", "model"], ["fixed_pips", "atr", "structure"])}
+          {number("Stop value", ["exit", "stop_loss", "value"])}
+          {number("ATR period", ["exit", "stop_loss", "atr_period"])}
+          {choose("TP1 model", ["exit", "take_profit", 0, "model"], ["rr", "fixed_pips", "atr"])}
+          {number("TP1 value", ["exit", "take_profit", 0, "value"])}
+          {number("TP1 close %", ["exit", "take_profit", 0, "close_percent"])}
         </>
-      )}
-
-      {kind === "take_profit" && (
-        <>
-          {choose("Model", ["model"], node.model, ["rr", "fixed_pips", "atr"])}
-          {number("Value", ["value"], node.value)}
-          {number("Close %", ["close_percent"], node.close_percent)}
-        </>
-      )}
-
-      {kind === "risk" && (
-        <>
-          {choose("Model", ["model"], node.model, ["fixed_percent", "fixed_amount", "atr_based"])}
-          {number("Value", ["value"], node.value)}
-        </>
-      )}
-
-      {kind === "guards" && (
-        <p className="text-sm text-muted-foreground">
-          Martingale, averaging-down, and grid are denied by default and stay locked.
-        </p>
-      )}
-
-      {kind === "filters" && (
-        <p className="text-sm text-muted-foreground">
-          Session / news / time filters apply only when you add them.
-        </p>
       )}
     </div>
   );

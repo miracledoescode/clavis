@@ -5,8 +5,9 @@ import { useState } from "react";
 import type { StrategySpec } from "@/contract/types";
 import { createStrategy, parseStrategy, updateStrategy } from "@/lib/api";
 
+import { setAtPath } from "./graph";
 import { StrategyCanvas } from "./StrategyCanvas";
-import type { ClarifyQuestion, MissingField } from "./types";
+import type { ClarifyQuestion, MissingField, SetupDirectionInfo } from "./types";
 
 type Notice =
   | { kind: "clarification"; questions: ClarifyQuestion[] }
@@ -15,17 +16,25 @@ type Notice =
   | { kind: "error"; message: string };
 
 const PLACEHOLDER =
-  "e.g. Go long EUR/USD on the H1 when price pulls back to the rising 200 EMA. " +
-  "Risk 1% per trade, stop 1.5x ATR, take profit at 2R.";
+  "e.g. Go long EUR/USD on the H1 when RSI crosses below 30 and price taps the 200 EMA. " +
+  "Risk 1% per trade, stop 1.5x ATR, take profit at 2.5R.";
 
 export function RuleBuilder() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [spec, setSpec] = useState<StrategySpec | null>(null);
+  const [setupsInfo, setSetupsInfo] = useState<SetupDirectionInfo[]>([]);
+  const [confirmed, setConfirmed] = useState<boolean[]>([]);
   const [strategyId, setStrategyId] = useState<string | null>(null);
   const [version, setVersion] = useState<number | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  function clearSpec() {
+    setSpec(null);
+    setSetupsInfo([]);
+    setConfirmed([]);
+  }
 
   async function onParse() {
     if (!text.trim()) return;
@@ -36,13 +45,19 @@ export function RuleBuilder() {
       const res = await parseStrategy(text);
       if (res.type === "spec") {
         setSpec(res.spec);
+        setSetupsInfo(res.setups);
+        // Require explicit confirmation of EVERY setup's direction.
+        setConfirmed(res.setups.map(() => false));
         setStrategyId(null);
         setVersion(null);
       } else if (res.type === "clarification") {
+        clearSpec();
         setNotice({ kind: "clarification", questions: res.questions });
       } else if (res.type === "block") {
+        clearSpec();
         setNotice({ kind: "block", message: res.message });
       } else if (res.type === "incomplete") {
+        clearSpec();
         setNotice({ kind: "incomplete", message: res.message, missing: res.missing });
       } else {
         setNotice({ kind: "error", message: res.message });
@@ -54,8 +69,25 @@ export function RuleBuilder() {
     }
   }
 
+  function confirmSetup(i: number) {
+    setConfirmed((prev) => prev.map((c, idx) => (idx === i ? true : c)));
+  }
+
+  function flipSetup(i: number) {
+    setSpec((prev) =>
+      prev
+        ? setAtPath(prev, ["setups", i, "direction"], prev.setups[i].direction === "long" ? "short" : "long")
+        : prev,
+    );
+    setConfirmed((prev) => prev.map((c, idx) => (idx === i ? true : c)));
+  }
+
+  const allConfirmed =
+    !!spec && confirmed.length === spec.setups.length && confirmed.every(Boolean);
+  const pendingCount = confirmed.filter((c) => !c).length;
+
   async function onSave() {
-    if (!spec) return;
+    if (!spec || !allConfirmed) return;
     setBusy(true);
     setSaveMsg(null);
     try {
@@ -96,7 +128,8 @@ export function RuleBuilder() {
             {busy ? "Reading…" : "Build from description"}
           </button>
           <span className="text-xs text-muted-foreground">
-            The Agent captures the logic you described — it never adds logic you didn&apos;t author.
+            The Agent captures the checklist you described and proposes a side — it never finalizes a
+            direction you didn&apos;t confirm.
           </span>
         </div>
       </div>
@@ -137,13 +170,27 @@ export function RuleBuilder() {
 
       {spec && (
         <div className="space-y-3">
-          <StrategyCanvas spec={spec} onChange={setSpec} />
+          {!allConfirmed && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+              Confirm the direction of each setup before saving — {pendingCount} pending. Use Confirm
+              or Flip on each setup node.
+            </div>
+          )}
+          <StrategyCanvas
+            spec={spec}
+            setupsInfo={setupsInfo}
+            confirmed={confirmed}
+            onConfirm={confirmSetup}
+            onFlip={flipSetup}
+            onChange={setSpec}
+          />
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={onSave}
-              disabled={busy}
+              disabled={busy || !allConfirmed}
               className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+              title={allConfirmed ? undefined : "Confirm every setup's direction first"}
             >
               {strategyId ? "Save edit (new version)" : "Save strategy"}
             </button>

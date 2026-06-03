@@ -4,11 +4,17 @@ Pipeline for a natural-language strategy description:
   1. DANGEROUS-VAGUENESS classifier (deterministic, runs BEFORE any model call):
      if the language implies martingale, averaging-down, or grid behaviour, block
      it with a plain-language warning. Nothing dangerous is ever encoded.
-  2. Claude translates the trader's words into a candidate StrategySpec or asks
-     structured clarifying questions (the Agent only encodes the user's logic).
+  2. Claude translates the trader's words into a candidate StrategySpec (one or
+     more setups) or asks structured clarifying questions. Per setup it PROPOSES
+     a direction with an `inferred` flag.
   3. COMPLETENESS check: validate the candidate against the Pydantic contract
      (schemas.py). On failure, return what is missing - never a half-valid spec.
   4. Defence in depth: reject any spec whose RiskGuards are not all denied.
+
+DIRECTION GUARDRAIL (constitution): the Agent may propose the side a checklist
+implies, but it NEVER finalizes an inferred side on its own. The parse result
+returns each setup's proposed direction marked as inferred; a spec is not
+authored until the user confirms every setup's direction in the Rule Builder.
 
 Returns a plain dict tagged by "type": block | clarification | incomplete | spec | error.
 """
@@ -102,6 +108,49 @@ def _format_validation_errors(exc: ValidationError) -> list[dict[str, str]]:
     return out
 
 
+# `direction_inferred` / `direction_rationale` are PARSE-TIME hints, not part of
+# the persisted contract. Strip them off each setup before validation so the
+# candidate is a clean StrategySpec, and keep them for the confirmation step.
+_INFERENCE_KEYS = ("direction_inferred", "direction_rationale")
+
+
+def _pop_direction_inferences(candidate: Any) -> dict[int, dict[str, Any]]:
+    """Remove and collect per-setup direction-inference hints from the candidate."""
+    inferences: dict[int, dict[str, Any]] = {}
+    if isinstance(candidate, dict):
+        setups = candidate.get("setups")
+        if isinstance(setups, list):
+            for i, setup in enumerate(setups):
+                if isinstance(setup, dict):
+                    # Default to inferred=True: never finalize a side on our own.
+                    inferred = setup.pop("direction_inferred", True)
+                    rationale = setup.pop("direction_rationale", "")
+                    inferences[i] = {
+                        "inferred": bool(inferred),
+                        "rationale": rationale or "",
+                    }
+    return inferences
+
+
+def _build_setup_confirmations(
+    spec: StrategySpec, inferences: dict[int, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Pair each validated setup with its proposed-direction confirmation info."""
+    confirmations: list[dict[str, Any]] = []
+    for i, setup in enumerate(spec.setups):
+        meta = inferences.get(i, {"inferred": True, "rationale": ""})
+        confirmations.append(
+            {
+                "index": i,
+                "name": setup.name,
+                "direction": setup.direction,
+                "inferred": bool(meta.get("inferred", True)),
+                "rationale": meta.get("rationale", ""),
+            }
+        )
+    return confirmations
+
+
 def parse_strategy(nl_text: str, *, claude_call: Callable[[str], str]) -> dict[str, Any]:
     """Run the full parse pipeline. `claude_call(text) -> raw_json_str` is injected."""
     # 1. Dangerous-vagueness classifier — short-circuits before any model call.
@@ -124,6 +173,9 @@ def parse_strategy(nl_text: str, *, claude_call: Callable[[str], str]) -> dict[s
 
     candidate = data.get("spec") if data.get("type") == "spec" else data
 
+    # Separate the per-setup direction-inference hints from the contract payload.
+    inferences = _pop_direction_inferences(candidate)
+
     # 3. Completeness check against the contract.
     try:
         spec = StrategySpec.model_validate(candidate)
@@ -142,4 +194,11 @@ def parse_strategy(nl_text: str, *, claude_call: Callable[[str], str]) -> dict[s
     ):
         return _block_response(["risk_guards_disabled"])
 
-    return {"type": "spec", "spec": spec.model_dump()}
+    # 5. Surface the proposed directions for confirmation — never auto-finalized.
+    setups = _build_setup_confirmations(spec, inferences)
+    return {
+        "type": "spec",
+        "spec": spec.model_dump(),
+        "setups": setups,
+        "requires_direction_confirmation": any(s["inferred"] for s in setups),
+    }

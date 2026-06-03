@@ -44,7 +44,9 @@ class Instrument(_Base):
 # --------------------------------------------------------------------------- #
 
 Timeframe = Literal["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
-Direction = Literal["long", "short", "both"]
+# Exactly one side per setup. A setup is a long checklist OR a short checklist —
+# never "both". Multi-directional strategies hold multiple setups instead.
+SetupDirection = Literal["long", "short"]
 
 
 class Timeframes(_Base):
@@ -119,7 +121,8 @@ LogicalOperator = Literal["all", "any"]
 class ConditionGroup(_Base):
     operator: LogicalOperator
     # Tree of conditions and nested groups. Mirrors the React Flow canvas.
-    children: list[Union[Condition, "ConditionGroup"]]
+    # Non-empty: an empty checklist is not a strategy (rejected at validation).
+    children: list[Union[Condition, "ConditionGroup"]] = Field(min_length=1)
 
 
 # --------------------------------------------------------------------------- #
@@ -139,13 +142,8 @@ class Confluence(_Base):
 
 
 # --------------------------------------------------------------------------- #
-# Entry / Exit                                                                #
+# Exit                                                                        #
 # --------------------------------------------------------------------------- #
-
-
-class EntrySpec(_Base):
-    conditions: ConditionGroup
-    confluence: Optional[Confluence] = None
 
 
 StopModel = Literal["fixed_pips", "atr", "structure"]
@@ -258,7 +256,8 @@ class RiskGuards(_Base):
 
 
 class RiskSpec(_Base):
-    per_trade: PerTradeRisk
+    # Strategy-level caps that apply ACROSS all setups. Per-trade risk now lives
+    # on each Setup; session/account caps and the default-deny guards are global.
     session: Optional[SessionRisk] = None
     account: Optional[AccountRisk] = None
     guards: RiskGuards = Field(default_factory=RiskGuards)
@@ -285,6 +284,25 @@ class ExecutionSpec(_Base):
 
 
 # --------------------------------------------------------------------------- #
+# Setup  (a single-direction checklist; the trade follows from the conditions) #
+# --------------------------------------------------------------------------- #
+
+
+class Setup(_Base):
+    name: str
+    # The parser may PROPOSE this side from the checklist, but Clavis never
+    # finalizes an inferred direction on its own — the user confirms each setup.
+    direction: SetupDirection
+    # The checklist of what must be true for this setup to trigger.
+    entry: ConditionGroup
+    confluence: Optional[Confluence] = None
+    # Sessions / news / time filters live WITH the setup that uses them.
+    filters: Optional[Filters] = None
+    exit: ExitSpec
+    per_trade_risk: PerTradeRisk
+
+
+# --------------------------------------------------------------------------- #
 # Top-level StrategySpec                                                       #
 # --------------------------------------------------------------------------- #
 
@@ -304,11 +322,11 @@ class StrategySpec(_Base):
 
     instrument: Instrument
     timeframes: Timeframes
-    direction: Direction
+    # A strategy is one or more setups, each with its own direction, checklist,
+    # filters, exit, and per-trade risk.
+    setups: list[Setup] = Field(min_length=1)
 
-    entry: EntrySpec
-    exit: ExitSpec
-    filters: Filters = Field(default_factory=Filters)
+    # Strategy-level risk: session/account caps + the default-deny guards.
     risk: RiskSpec
     execution: ExecutionSpec
 
