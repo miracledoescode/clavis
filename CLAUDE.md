@@ -190,6 +190,53 @@ exists. Do not build them early.
 
 -----
 
+## State and Recovery (the live-engine safety contract)
+
+SL and TP live at the broker on every order, so a process crash never leaves a
+position unprotected. The real risks on restart are different: **lost
+monitoring, state drift, and double execution.** This is the contract the live
+loop (slice 4) is built against; the pure parts already exist and are tested.
+
+**Three layers of truth.**
+- The **broker** (via MetaApi) is AUTHORITATIVE for what positions and orders
+  actually exist. When records disagree, the broker wins.
+- **Postgres** is the durable record (strategies, versions, `agent_logs`,
+  `execution_history`).
+- **Upstash Redis** holds HOT state only: pending proposals + their validity
+  windows, idempotency keys, and open-position flags. Hot state is a cache and a
+  coordination layer, never the source of truth.
+
+**Reconcile before acting — every boot.** Before the loop resumes, the engine
+MUST run a reconciliation pass:
+1. Fetch real broker state (open positions, working orders).
+2. Load expected state (Postgres durable record + Redis hot state).
+3. Diff them and act: **adopt** broker positions Clavis does not recognise
+   (bring under management, NEVER open a duplicate); **close_out** expected
+   positions the broker no longer shows (they hit SL/TP while we were down —
+   record the outcome to `execution_history`); **invalidate** proposals whose
+   validity window expired during downtime.
+4. Only THEN resume the loop.
+The pure diff is `engine/reconciliation.py::reconcile(...)` (no I/O, clock passed
+in).
+
+**Idempotency.** Every order send carries a client key — the `proposal_id` —
+PERSISTED before the send (`engine/idempotency.py`; Redis marker via StateStore).
+On restart, never resend a key that already produced a broker order;
+`should_send(proposal, used_keys)` is the gate. This is what prevents double
+execution.
+
+**The live process is disposable.** ZERO authoritative state in process memory —
+everything needed to recover lives in the broker, Postgres, and Redis, so any
+instance can be killed and replaced mid-flight. Any V1 ML runs in a SEPARATE
+worker, NEVER inside the execution loop.
+
+Interfaces the live loop implements against (stubs until slice 4):
+`bridge/broker.py::BrokerAdapter` (MetaApi; internal only — `place_order`
+requires SL/TP) and `engine/hot_state.py::StateStore` (Upstash Redis; the Redis
+key schema is documented there).
+
+-----
+
 ## The four hard problems (design-stage — do NOT claim “solved”)
 
 1. NLP ambiguity -> clarification pass + completeness checker.
