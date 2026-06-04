@@ -37,7 +37,9 @@ achievable in under 30 minutes on first use.
    only its own rows. The engine uses the service role key. No exceptions.
 1. **Credentials are never stored raw.** Metadata + a Supabase Vault reference,
    service-role decryption only, bound to our servers via MetaApi IP
-   whitelisting. KMS envelope encryption is the first hardening after MVP.
+   whitelisting. KMS envelope encryption wraps the Vault secret from V0 — not a
+   post-MVP hardening — because live is paid from day one and real credentials
+   are handled in week one, so the envelope is in place from the start.
 1. **The word is “Agent”, never “bot”.** Agents make judgments and explain
    them. This applies to code identifiers, comments, UI copy, everything.
 1. **agent_logs is the moat.** It is the RLHF capture table. ON DELETE RESTRICT.
