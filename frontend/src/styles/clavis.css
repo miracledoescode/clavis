@@ -90,3 +90,24 @@
   font-family: var(--font-plex-mono), ui-monospace, monospace;
   font-feature-settings: "tnum" 1;
 }
+
+/* Soft, warm-tinted depth for cards (editorial, never heavy). */
+.shadow-card {
+  box-shadow:
+    0 1px 2px hsl(31 18% 11% / 0.04),
+    0 14px 30px -18px hsl(31 18% 11% / 0.18);
+}
+
+/* Short gold rule used beside eyebrows / section heads. */
+.gold-rule {
+  display: block;
+  height: 2px;
+  width: 2.25rem;
+  flex: none;
+  background: hsl(var(--gold));
+}
+
+/* Faint warm glow behind the hero — gold, low opacity, no blue/purple. */
+.hero-glow {
+  background: radial-gradient(60% 60% at 50% 0%, hsl(var(--gold) / 0.12), transparent 70%);
+}
