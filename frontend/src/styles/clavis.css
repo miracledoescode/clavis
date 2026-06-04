@@ -1,0 +1,92 @@
+/* ============================================================================
+   clavis.css — Clavis brand source of truth
+   Editorial financial-print: warm bone paper, near-black ink, a single gold
+   accent. Spectral (headlines/body) + IBM Plex Mono (labels/numbers). No blue,
+   no purple. Calm and restrained.
+
+   Tokens are HSL channel triples consumed via hsl(var(--token)) in
+   tailwind.config.ts, so existing shadcn-style utilities reskin automatically.
+   ========================================================================== */
+
+:root {
+  /* Core surfaces & ink */
+  --background: 42 48% 92%;          /* bone paper */
+  --foreground: 31 18% 11%;          /* near-black warm ink */
+  --card: 42 52% 96%;                /* raised cream */
+  --card-foreground: 31 18% 11%;
+  --popover: 42 52% 96%;
+  --popover-foreground: 31 18% 11%;
+
+  /* The single gold accent */
+  --primary: 40 73% 44%;             /* gold */
+  --primary-foreground: 31 24% 12%;  /* ink on gold */
+
+  --secondary: 41 36% 88%;           /* warm sand */
+  --secondary-foreground: 31 18% 11%;
+  --muted: 41 34% 89%;
+  --muted-foreground: 33 13% 38%;    /* muted warm */
+  --accent: 41 40% 87%;
+  --accent-foreground: 31 18% 11%;
+
+  /* Restrained clay-red — errors and the kill switch (never neon) */
+  --destructive: 13 62% 45%;
+  --destructive-foreground: 42 52% 96%;
+
+  --border: 40 26% 82%;
+  --input: 40 26% 82%;
+  --ring: 40 73% 44%;
+
+  --radius: 0.5rem;
+
+  /* Extended brand tokens */
+  --gold: 40 73% 44%;
+  --gold-bright: 44 86% 56%;         /* sparing highlight */
+  --paper: 42 48% 92%;
+  --paper-deep: 41 33% 86%;          /* section banding */
+  --ink: 31 18% 11%;
+  --up: 84 20% 37%;                  /* muted gain (app, later) */
+  --down: 16 44% 43%;                /* muted loss (app, later) */
+}
+
+.dark {
+  --background: 30 12% 9%;
+  --foreground: 42 32% 90%;
+  --card: 30 12% 12%;
+  --card-foreground: 42 32% 90%;
+  --popover: 30 12% 12%;
+  --popover-foreground: 42 32% 90%;
+  --primary: 43 80% 56%;
+  --primary-foreground: 30 20% 9%;
+  --secondary: 32 10% 18%;
+  --secondary-foreground: 42 32% 90%;
+  --muted: 32 10% 18%;
+  --muted-foreground: 38 12% 62%;
+  --accent: 32 12% 20%;
+  --accent-foreground: 42 32% 90%;
+  --destructive: 13 58% 48%;
+  --destructive-foreground: 42 32% 92%;
+  --border: 32 10% 22%;
+  --input: 32 10% 22%;
+  --ring: 43 80% 56%;
+  --gold: 43 80% 56%;
+  --gold-bright: 44 86% 62%;
+  --paper: 30 12% 9%;
+  --paper-deep: 30 12% 13%;
+  --ink: 42 32% 90%;
+  --up: 84 22% 52%;
+  --down: 16 50% 56%;
+}
+
+/* Brand utility classes (mono labels & tabular numbers) */
+.eyebrow {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+.numeric {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-feature-settings: "tnum" 1;
+}

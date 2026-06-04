@@ -16,12 +16,24 @@ const config: Config = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["var(--font-spectral)", "Georgia", "serif"],
+        serif: ["var(--font-spectral)", "Georgia", "serif"],
+        mono: ["var(--font-plex-mono)", "ui-monospace", "monospace"],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        gold: {
+          DEFAULT: "hsl(var(--gold))",
+          bright: "hsl(var(--gold-bright))",
+        },
+        "paper-deep": "hsl(var(--paper-deep))",
+        up: "hsl(var(--up))",
+        down: "hsl(var(--down))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
