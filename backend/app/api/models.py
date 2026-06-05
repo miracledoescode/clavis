@@ -25,3 +25,10 @@ class CreateStrategyRequest(BaseModel):
 class UpdateStrategyRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=200)
     spec: StrategySpec
+
+
+class BacktestRequest(BaseModel):
+    """Backtest a saved strategy. `params` may carry window (start/end) + cost overrides."""
+
+    strategy_id: str
+    params: Optional[dict] = None

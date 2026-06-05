@@ -1,0 +1,12 @@
+{
+  "name": "clavis-ingest",
+  "private": true,
+  "type": "module",
+  "description": "One-time Dukascopy OHLCV ingest for the Clavis backtest worker (free, no key).",
+  "scripts": {
+    "ingest": "node ingest_dukascopy.mjs"
+  },
+  "dependencies": {
+    "dukascopy-node": "^7.4.0"
+  }
+}

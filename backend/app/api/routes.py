@@ -13,14 +13,27 @@ mounted here — it is internal infrastructure.
 """
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from pydantic import ValidationError
 
 from app.api.deps import get_current_user
-from app.api.models import CreateStrategyRequest, ParseRequest, UpdateStrategyRequest
-from app.engine import strategy_engine
+from app.api.models import (
+    BacktestRequest,
+    CreateStrategyRequest,
+    ParseRequest,
+    UpdateStrategyRequest,
+)
+from app.contract.schemas import StrategySpec
+from app.engine import backtest_store, strategy_engine
 from app.engine.strategy_parser import parse_strategy
+
+# Where the Dukascopy ingest writes its parquet store. Empty -> backtests error
+# clearly ("run the ingest") rather than fabricate data.
+BACKTEST_DATA_DIR = os.getenv("BACKTEST_DATA_DIR", "")
 
 router = APIRouter()
 
@@ -95,3 +108,67 @@ async def update_strategy(
 @router.get("/strategies", tags=["strategies"])
 async def list_strategies(principal: dict = Depends(get_current_user)) -> list:
     return await strategy_engine.list_strategies(token=principal["token"])
+
+
+# --------------------------------------------------------------------------- #
+# Backtest (in-process job + polling)                                          #
+# --------------------------------------------------------------------------- #
+def _compute_report(spec: dict, params: dict) -> dict:
+    """Load local OHLCV and run the VectorBT worker. Lazy imports keep the heavy
+    numeric stack off the app-import path; runs in a worker thread."""
+    from app.engine.backtest_data import load_ohlcv
+    from app.engine.backtest_worker import BacktestConfig, run_backtest
+
+    if not BACKTEST_DATA_DIR:
+        raise RuntimeError("BACKTEST_DATA_DIR is not configured; run the Dukascopy ingest first.")
+    symbol = spec["instrument"]["symbol"]
+    timeframe = spec["timeframes"]["entry"]
+    df = load_ohlcv(symbol, timeframe, BACKTEST_DATA_DIR, start=params.get("start"), end=params.get("end"))
+    overrides = params.get("cost_overrides") or {}
+    return run_backtest(spec, df, BacktestConfig(**overrides) if overrides else None)
+
+
+async def _run_backtest_job(backtest_id: str, spec: dict, params: dict, token: str) -> None:
+    try:
+        await backtest_store.update_backtest(backtest_id, token, status="running")
+        report = await asyncio.to_thread(_compute_report, spec, params)
+        await backtest_store.update_backtest(backtest_id, token, status="done", report=report)
+    except Exception as exc:  # noqa: BLE001 - record the failure on the row; never crash
+        await backtest_store.update_backtest(backtest_id, token, status="error", error=str(exc)[:500])
+
+
+@router.post("/backtests", status_code=status.HTTP_202_ACCEPTED, tags=["backtest"])
+async def create_backtest(
+    req: BacktestRequest,
+    background: BackgroundTasks,
+    principal: dict = Depends(get_current_user),
+) -> dict:
+    """Queue a backtest of the caller's OWN strategy (RLS-scoped load)."""
+    token = principal["token"]
+    strategy = await backtest_store.get_strategy(req.strategy_id, token)
+    if strategy is None:
+        # RLS hides other users' strategies, so 'not found' also covers 'not yours'.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
+    try:
+        StrategySpec.model_validate(strategy["strategy_spec"])  # an unvalidated spec never runs
+    except ValidationError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Strategy spec is invalid"
+        )
+    row = await backtest_store.create_backtest(
+        user_id=principal["user_id"],
+        strategy_id=req.strategy_id,
+        strategy_version=strategy.get("version"),
+        params=req.params or {},
+        token=token,
+    )
+    background.add_task(_run_backtest_job, row["id"], strategy["strategy_spec"], req.params or {}, token)
+    return {"id": row["id"], "status": row["status"]}
+
+
+@router.get("/backtests/{backtest_id}", tags=["backtest"])
+async def get_backtest(backtest_id: str, principal: dict = Depends(get_current_user)) -> dict:
+    row = await backtest_store.get_backtest(backtest_id, principal["token"])
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest not found")
+    return row
