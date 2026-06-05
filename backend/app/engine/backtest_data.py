@@ -41,8 +41,8 @@ def pip_size(symbol: str) -> float:
     return 0.0001
 
 
-def data_path(data_dir: str, symbol: str, timeframe: str) -> str:
-    return os.path.join(data_dir, f"{symbol.upper()}_{timeframe}.parquet")
+def data_path(data_dir: str, symbol: str, timeframe: str, ext: str = "parquet") -> str:
+    return os.path.join(data_dir, f"{symbol.upper()}_{timeframe}.{ext}")
 
 
 def load_ohlcv(
@@ -52,13 +52,19 @@ def load_ohlcv(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Load a normalized, UTC-indexed OHLCV frame from the local store."""
-    path = data_path(data_dir, symbol, timeframe)
-    if not os.path.exists(path):
+    """Load a normalized, UTC-indexed OHLCV frame from the local store (parquet or csv)."""
+    parquet = data_path(data_dir, symbol, timeframe, "parquet")
+    csv = data_path(data_dir, symbol, timeframe, "csv")
+    if os.path.exists(parquet):
+        df = pd.read_parquet(parquet)
+    elif os.path.exists(csv):
+        df = pd.read_csv(csv)
+    else:
         raise FileNotFoundError(
-            f"No market data at {path}. Run the Dukascopy ingest (scripts/ingest_dukascopy.mjs) first."
+            f"No market data for {symbol} {timeframe} in {data_dir} (.parquet or .csv). "
+            "Run the Dukascopy ingest (scripts/ingest_dukascopy.mjs) first."
         )
-    df = _normalize(pd.read_parquet(path))
+    df = _normalize(df)
     if start:
         df = df[df.index >= pd.Timestamp(start, tz="UTC")]
     if end:
