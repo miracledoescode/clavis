@@ -1,4 +1,5 @@
 import type { StrategySpec } from "@/contract/types";
+import type { BacktestRow } from "@/modules/backtest-lab/types";
 import type { ParseResult } from "@/modules/rule-builder/types";
 import { supabase } from "@/lib/supabase";
 
@@ -64,4 +65,25 @@ export async function listStrategies(): Promise<StrategyRow[]> {
   const res = await fetch(`${API_BASE_URL}/strategies`, { headers: await authHeaders() });
   if (!res.ok) throw new Error(`List failed (${res.status})`);
   return (await res.json()) as StrategyRow[];
+}
+
+/** Queue a backtest of a saved strategy. Returns the new backtest id + status. */
+export async function runBacktest(
+  strategyId: string,
+  params?: Record<string, unknown>,
+): Promise<{ id: string; status: string }> {
+  const res = await fetch(`${API_BASE_URL}/backtests`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ strategy_id: strategyId, params: params ?? null }),
+  });
+  if (!res.ok) throw new Error(`Backtest request failed (${res.status})`);
+  return (await res.json()) as { id: string; status: string };
+}
+
+/** Poll a backtest by id (status -> done with the report, or error). */
+export async function getBacktest(id: string): Promise<BacktestRow> {
+  const res = await fetch(`${API_BASE_URL}/backtests/${id}`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error(`Backtest fetch failed (${res.status})`);
+  return (await res.json()) as BacktestRow;
 }
