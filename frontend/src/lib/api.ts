@@ -26,7 +26,7 @@ export interface StrategyRow {
 
 /** Natural language -> block | clarification | incomplete | spec. */
 export async function parseStrategy(text: string): Promise<ParseResult> {
-  const res = await fetch(`${API_BASE_URL}/strategies/parse`, {
+  const res = await fetch(`${API_BASE_URL}/v1/strategies/parse`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({ text }),
@@ -37,7 +37,7 @@ export async function parseStrategy(text: string): Promise<ParseResult> {
 
 /** Validate + persist a new strategy (version 1). */
 export async function createStrategy(name: string, spec: StrategySpec): Promise<StrategyRow> {
-  const res = await fetch(`${API_BASE_URL}/strategies`, {
+  const res = await fetch(`${API_BASE_URL}/v1/strategies`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({ name, spec }),
@@ -52,7 +52,7 @@ export async function updateStrategy(
   name: string | null,
   spec: StrategySpec,
 ): Promise<StrategyRow> {
-  const res = await fetch(`${API_BASE_URL}/strategies/${id}`, {
+  const res = await fetch(`${API_BASE_URL}/v1/strategies/${id}`, {
     method: "PUT",
     headers: await authHeaders(),
     body: JSON.stringify({ name, spec }),
@@ -62,7 +62,7 @@ export async function updateStrategy(
 }
 
 export async function listStrategies(): Promise<StrategyRow[]> {
-  const res = await fetch(`${API_BASE_URL}/strategies`, { headers: await authHeaders() });
+  const res = await fetch(`${API_BASE_URL}/v1/strategies`, { headers: await authHeaders() });
   if (!res.ok) throw new Error(`List failed (${res.status})`);
   return (await res.json()) as StrategyRow[];
 }
@@ -72,7 +72,7 @@ export async function runBacktest(
   strategyId: string,
   params?: Record<string, unknown>,
 ): Promise<{ id: string; status: string }> {
-  const res = await fetch(`${API_BASE_URL}/backtests`, {
+  const res = await fetch(`${API_BASE_URL}/v1/backtests`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({ strategy_id: strategyId, params: params ?? null }),
@@ -83,7 +83,7 @@ export async function runBacktest(
 
 /** Poll a backtest by id (status -> done with the report, or error). */
 export async function getBacktest(id: string): Promise<BacktestRow> {
-  const res = await fetch(`${API_BASE_URL}/backtests/${id}`, { headers: await authHeaders() });
+  const res = await fetch(`${API_BASE_URL}/v1/backtests/${id}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error(`Backtest fetch failed (${res.status})`);
   return (await res.json()) as BacktestRow;
 }

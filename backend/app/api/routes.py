@@ -1,12 +1,14 @@
 """HTTP routes for the public API surface.
 
 Authoring slice:
-  GET  /health               public liveness probe
-  GET  /api/me               whoami (proves auth wiring)
-  POST /strategies/parse     natural language -> block | clarification | spec
-  POST /strategies           create (validate -> persist v1 + snapshot)
-  PUT  /strategies/{id}       edit (validate -> bump version + snapshot)
-  GET  /strategies           list the caller's strategies
+  GET  /health                       public liveness probe
+  GET  /v1/api/me                    whoami (proves auth wiring)
+  POST /v1/strategies/parse          natural language -> block | clarification | spec
+  POST /v1/strategies                create (validate -> persist v1 + snapshot)
+  PUT  /v1/strategies/{id}           edit (validate -> bump version + snapshot)
+  GET  /v1/strategies                list the caller's strategies
+  POST /v1/backtests                 queue a backtest
+  GET  /v1/backtests/{id}            poll backtest status & report
 
 Every route except /health requires a verified Supabase JWT. The bridge is never
 mounted here — it is internal infrastructure.
@@ -35,7 +37,7 @@ from app.engine.strategy_parser import parse_strategy
 # clearly ("run the ingest") rather than fabricate data.
 BACKTEST_DATA_DIR = os.getenv("BACKTEST_DATA_DIR", "")
 
-router = APIRouter()
+router = APIRouter(prefix="/v1")
 
 
 def get_claude_call():
@@ -56,7 +58,7 @@ async def health() -> dict[str, str]:
 
 @router.get("/api/me", tags=["auth"])
 async def me(principal: dict = Depends(get_current_user)) -> dict[str, str]:
-    return {"user_id": principal["user_id"]}
+    return {"user_id": principal["user_id"], "email": principal.get("email", "")}
 
 
 @router.post("/strategies/parse", tags=["rule-builder"])

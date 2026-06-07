@@ -91,7 +91,7 @@ def test_parse_returns_validated_spec(client):
     spec = _claude_spec([_setup("long", "crosses_below"), _setup("short", "crosses_above")])
     _set_claude_reply(json.dumps({"type": "spec", "spec": spec}))
     r = client.post(
-        "/strategies/parse",
+        "/v1/strategies/parse",
         json={"text": "RSI reversion both ways on EURUSD H1, 1% risk, 1.5 ATR stop, 2.5R"},
     )
     assert r.status_code == 200
@@ -115,7 +115,7 @@ def test_ambiguous_prompt_triggers_clarification(client):
             }
         )
     )
-    r = client.post("/strategies/parse", json={"text": "buy when it looks strong"})
+    r = client.post("/v1/strategies/parse", json={"text": "buy when it looks strong"})
     body = r.json()
     assert body["type"] == "clarification"
     assert body["questions"]
@@ -130,7 +130,7 @@ def test_martingale_prompt_is_blocked(client):
 
     app.dependency_overrides[get_claude_call] = lambda: fake
     r = client.post(
-        "/strategies/parse",
+        "/v1/strategies/parse",
         json={"text": "Use a martingale: double my lot size after every loss until I recover"},
     )
     body = r.json()
@@ -145,7 +145,7 @@ def test_inferred_direction_returned_for_confirmation(client):  # (d)
     )
     _set_claude_reply(json.dumps({"type": "spec", "spec": spec}))
     r = client.post(
-        "/strategies/parse",
+        "/v1/strategies/parse",
         json={"text": "enter when RSI crosses below 30 on EURUSD H1, 1% risk, 1.5 ATR stop, 2.5R"},
     )
     body = r.json()
