@@ -5,6 +5,9 @@ anthropic==0.105.2
 pyjwt[crypto]==2.13.0
 httpx==0.28.1
 
+# Broker bridge
+metaapi-cloud-sdk==17.4.0
+
 # Backtest engine
 numpy==1.26.4
 pandas==2.3.3

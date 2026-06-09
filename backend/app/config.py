@@ -21,6 +21,9 @@ ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "").rstrip("/")
 # Browser/anon publishable key; also sent as the PostgREST `apikey` header.
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+# Service-role key: engine-only writes (agent_logs, execution_history).
+# Never exposed to the browser; bypasses RLS for writes the engine owns.
+SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # JWT verification. Supabase issues asymmetric (RS256/ES256) access tokens when
 # JWT signing keys are enabled; we verify them against the project JWKS. The
@@ -43,3 +46,10 @@ CORS_ALLOW_ORIGINS: list[str] = _split_origins(
 
 # PostgREST base for engine-mediated writes under the user's JWT.
 SUPABASE_REST_URL: str = f"{SUPABASE_URL}/rest/v1" if SUPABASE_URL else ""
+
+# --- MetaApi (broker bridge — internal only; no public route) --------------- #
+METAAPI_TOKEN: str = os.getenv("METAAPI_TOKEN", "")
+METAAPI_ACCOUNT_ID: str = os.getenv("METAAPI_ACCOUNT_ID", "")
+# Broker-specific symbol suffix, e.g. ".m" for Exness / Justmarkets.
+# Empty string means no suffix (raw canonical symbols sent to the broker).
+METAAPI_SYMBOL_SUFFIX: str = os.getenv("METAAPI_SYMBOL_SUFFIX", "")
