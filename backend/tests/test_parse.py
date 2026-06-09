@@ -163,7 +163,7 @@ def test_explicit_direction_does_not_require_confirmation(client):
     )
     _set_claude_reply(json.dumps({"type": "spec", "spec": spec}))
     r = client.post(
-        "/strategies/parse",
+        "/v1/strategies/parse",
         json={"text": "short EURUSD H1 when RSI crosses above 70, 1% risk, 1.5 ATR stop, 2.5R"},
     )
     body = r.json()
@@ -173,7 +173,7 @@ def test_explicit_direction_does_not_require_confirmation(client):
 
 def test_incomplete_spec_reports_missing(client):
     _set_claude_reply(json.dumps({"type": "spec", "spec": {"schema_version": "1.0", "name": "x"}}))
-    r = client.post("/strategies/parse", json={"text": "long eurusd"})
+    r = client.post("/v1/strategies/parse", json={"text": "long eurusd"})
     body = r.json()
     assert body["type"] == "incomplete"
     assert body["missing"]
