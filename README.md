@@ -81,8 +81,3 @@ engine uses the **service-role key**. Credentials are stored as Vault references
 
 V0 ends at the log write. There is no training in V0 — the RLHF trainer, drift detector, and DNA
 clustering are V1. Crypto (CCXT) is V2.
-
-## Status
-
-**Scaffold only.** Module folders under `frontend/src/modules/` are placeholders, and the backend
-`engine/`, `bridge/`, and `integrations/` packages are stubs. Read `CLAUDE.md` before extending.
