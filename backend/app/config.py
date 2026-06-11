@@ -57,3 +57,10 @@ METAAPI_SYMBOL_SUFFIX: str = os.getenv("METAAPI_SYMBOL_SUFFIX", "")
 # --- Upstash Redis (hot state only; see engine/hot_state.py) ---------------- #
 UPSTASH_REDIS_REST_URL: str = os.getenv("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_REDIS_REST_TOKEN: str = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+
+# --- Telegram (Co-Pilot proposals: Approve/Reject + alerts) ----------------- #
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Echoed back as X-Telegram-Bot-Api-Secret-Token on every webhook call when the
+# webhook is registered with this secret_token. Empty -> verification skipped
+# (local dev only; see api/routers/telegram.py).
+TELEGRAM_WEBHOOK_SECRET: str = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")

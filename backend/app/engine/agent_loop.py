@@ -91,6 +91,7 @@ class ConditionEvaluator(Protocol):
 class TelegramNotifier(Protocol):
     async def send_proposal(self, proposal: ActiveProposal) -> None: ...
     async def send_invalidation(self, proposal_id: str, reason: str) -> None: ...
+    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None) -> None: ...
 
 
 @runtime_checkable
@@ -405,3 +406,45 @@ class AgentLoop:
         if self._cooldown_until and now >= self._cooldown_until:
             self._cooldown_until = None
             self._state = LoopState.FLAT
+
+
+# --------------------------------------------------------------------------- #
+# Agent loop registry (Telegram webhook -> AgentLoop lookup)                  #
+# --------------------------------------------------------------------------- #
+
+
+@runtime_checkable
+class AgentLoopRegistry(Protocol):
+    """Resolves a pending proposal id to the AgentLoop that owns it.
+
+    The Telegram webhook (api/routers/telegram.py) only receives a
+    `proposal_id` in callback_query.data; this is how it finds the right loop
+    to call on_approval/on_rejection on.
+    """
+
+    async def get_loop_for_proposal(self, proposal_id: str) -> Optional["AgentLoop"]: ...
+
+
+class InMemoryAgentLoopRegistry:
+    """One AgentLoop per deployed strategy, kept in process memory.
+
+    Per CLAUDE.md ("the live process is disposable") this index is rebuildable:
+    it is just `{strategy_id: AgentLoop}` for loops the live runner has started
+    in THIS process; the proposal -> strategy lookup goes through each loop's
+    StateStore (Postgres/Redis), not memory.
+    """
+
+    def __init__(self) -> None:
+        self._loops: dict[str, AgentLoop] = {}
+
+    def register(self, loop: AgentLoop) -> None:
+        self._loops[loop.spec.id] = loop
+
+    def unregister(self, strategy_id: str) -> None:
+        self._loops.pop(strategy_id, None)
+
+    async def get_loop_for_proposal(self, proposal_id: str) -> Optional[AgentLoop]:
+        for loop in self._loops.values():
+            if await loop.state_store.get_pending_proposal(proposal_id) is not None:
+                return loop
+        return None

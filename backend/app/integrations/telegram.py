@@ -19,7 +19,7 @@ callback_query.data and call loop.on_approval / loop.on_rejection.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -103,6 +103,14 @@ class TelegramBotNotifier:
                 "text": f"⚠️ Proposal invalidated: {reason}",
             },
         )
+
+    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None) -> None:
+        """Dismiss the inline keyboard's loading spinner after a tap is handled."""
+        c = await self._get()
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        await c.post(self._api("answerCallbackQuery"), json=payload)
 
     async def aclose(self) -> None:
         if self._owns_client and self._client is not None:
