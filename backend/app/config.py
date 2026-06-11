@@ -53,3 +53,7 @@ METAAPI_ACCOUNT_ID: str = os.getenv("METAAPI_ACCOUNT_ID", "")
 # Broker-specific symbol suffix, e.g. ".m" for Exness / Justmarkets.
 # Empty string means no suffix (raw canonical symbols sent to the broker).
 METAAPI_SYMBOL_SUFFIX: str = os.getenv("METAAPI_SYMBOL_SUFFIX", "")
+
+# --- Upstash Redis (hot state only; see engine/hot_state.py) ---------------- #
+UPSTASH_REDIS_REST_URL: str = os.getenv("UPSTASH_REDIS_REST_URL", "")
+UPSTASH_REDIS_REST_TOKEN: str = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
