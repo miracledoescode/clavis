@@ -5,6 +5,9 @@ anthropic==0.105.2
 pyjwt[crypto]==2.13.0
 httpx==0.28.1
 
+# Hot state (StateStore): pending proposals, idempotency markers, open-position flags
+upstash-redis==1.7.0
+
 # Broker bridge
 metaapi-cloud-sdk==17.4.0
 
