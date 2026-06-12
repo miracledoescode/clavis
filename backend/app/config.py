@@ -60,7 +60,31 @@ UPSTASH_REDIS_REST_TOKEN: str = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 
 # --- Telegram (Co-Pilot proposals: Approve/Reject + alerts) ----------------- #
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Chat that receives proposal/invalidation messages (single global account, V0).
+TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 # Echoed back as X-Telegram-Bot-Api-Secret-Token on every webhook call when the
 # webhook is registered with this secret_token. Empty -> verification skipped
 # (local dev only; see api/routers/telegram.py).
 TELEGRAM_WEBHOOK_SECRET: str = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+# Public HTTPS URL Telegram should POST webhook updates to
+# (https://api.telegram.org/bot<token>/setWebhook); set once at deploy time.
+TELEGRAM_WEBHOOK_URL: str = os.getenv("TELEGRAM_WEBHOOK_URL", "")
+
+
+# --- Live runner gate -------------------------------------------------------- #
+def live_runner_configured() -> bool:
+    """True if every credential the slice-4 live loop needs is present.
+
+    Local dev / CI leave these unset, so `main.py`'s lifespan no-ops and the
+    existing 233 tests (incl. `test_registry_not_configured_returns_503`) keep
+    passing unchanged.
+    """
+    return bool(
+        METAAPI_TOKEN
+        and METAAPI_ACCOUNT_ID
+        and UPSTASH_REDIS_REST_URL
+        and UPSTASH_REDIS_REST_TOKEN
+        and TELEGRAM_BOT_TOKEN
+        and TELEGRAM_CHAT_ID
+        and SUPABASE_SERVICE_ROLE_KEY
+    )

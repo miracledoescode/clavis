@@ -10,9 +10,12 @@ Design)"* page; **these files are the source of truth for what actually runs.**
    and the `anonymize_user()` GDPR routine.
 2. `clavis_billing_schema.sql` — `subscriptions` + `billing_events` (the Dodo Payments idempotency
    ledger).
+3. `clavis_live_schema.sql` — `strategies.deployment_status` (Deploy Hub) and
+   `agent_logs.proposal_id` + the widened `user_decision` constraint (the live loop's
+   pending -> decided capture pattern).
 
 Billing **must** be applied second: `subscriptions.user_id` references `public.users(id)`, which the
-core schema creates.
+core schema creates. The live-loop schema alters tables created in step 1, so it must be applied last.
 
 ## How to apply
 

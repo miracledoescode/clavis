@@ -47,6 +47,29 @@ def _format_proposal(proposal: ActiveProposal) -> str:
     )
 
 
+async def set_webhook(
+    token: str,
+    url: str,
+    secret_token: str = "",
+    client: Optional[httpx.AsyncClient] = None,
+) -> None:
+    """Register `url` as the Telegram Bot API webhook for `token`.
+
+    Idempotent — Telegram's setWebhook is safe to call repeatedly with the
+    same URL. Called once from main.py's lifespan on startup.
+    """
+    owns_client = client is None
+    c = client or httpx.AsyncClient(timeout=10.0)
+    try:
+        await c.post(
+            f"{_TELEGRAM_API}/bot{token}/setWebhook",
+            json={"url": url, "secret_token": secret_token or None},
+        )
+    finally:
+        if owns_client:
+            await c.aclose()
+
+
 class TelegramBotNotifier:
     """Sends proposals and invalidation notices via the Telegram Bot API."""
 

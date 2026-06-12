@@ -3,6 +3,12 @@
 Implements DecisionLogger (from agent_loop) against Supabase agent_logs — the
 moat table. Writes every decision (approve / reject / invalidated / executed)
 to agent_logs. ON DELETE RESTRICT; never cascade-wiped (CLAUDE.md).
+
+Row shape matches clavis_v0_schema.sql + clavis_live_schema.sql:
+  strategy_id, user_id, proposal_id, proposal (jsonb AgentProposal), user_decision,
+  reject_reason_chip, confidence_score, logged_at.
+``log_proposal`` inserts the row with user_decision="pending"; ``log_decision``
+later PATCHes that same row (matched by proposal_id) to the final decision.
 """
 from __future__ import annotations
 
@@ -12,6 +18,7 @@ from typing import Any, Optional
 import httpx
 
 from app import config
+from app.contract.schemas import AgentProposal
 from app.engine.agent_loop import ActiveProposal
 
 
@@ -31,6 +38,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _agent_proposal(p: ActiveProposal) -> dict[str, Any]:
+    return AgentProposal(
+        strategy_id=p.strategy_id,
+        symbol=p.symbol,
+        direction=p.direction,
+        entry_price=p.entry_price,
+        stop_loss_price=p.stop_loss_price,
+        take_profit_prices=p.take_profit_prices,
+        confidence_score=p.confidence_score,
+        rationale=p.rationale,
+        proposed_at=p.proposed_at.isoformat(),
+        expires_at=p.expires_at.isoformat(),
+    ).model_dump()
+
+
 class SupabaseDecisionLogger:
     """Writes proposals and their decisions to agent_logs (the RLHF seam)."""
 
@@ -48,7 +70,15 @@ class SupabaseDecisionLogger:
         await c.post(
             _url("agent_logs"),
             headers=_service_headers(),
-            json=self._row(proposal, decision="pending"),
+            json={
+                "strategy_id": proposal.strategy_id,
+                "user_id": proposal.user_id,
+                "proposal_id": proposal.proposal_id,
+                "proposal": _agent_proposal(proposal),
+                "user_decision": "pending",
+                "confidence_score": proposal.confidence_score,
+                "logged_at": _now_iso(),
+            },
         )
 
     async def log_decision(
@@ -62,28 +92,11 @@ class SupabaseDecisionLogger:
             _url(f"agent_logs?proposal_id=eq.{proposal.proposal_id}"),
             headers={**_service_headers(), "Prefer": "return=minimal"},
             json={
-                "decision": decision,
+                "user_decision": decision,
                 "reject_reason_chip": reject_reason,
                 "logged_at": _now_iso(),
             },
         )
-
-    def _row(self, p: ActiveProposal, decision: str) -> dict[str, Any]:
-        return {
-            "proposal_id": p.proposal_id,
-            "strategy_id": p.strategy_id,
-            "symbol": p.symbol,
-            "direction": p.direction,
-            "entry_price": p.entry_price,
-            "stop_loss_price": p.stop_loss_price,
-            "take_profit_prices": p.take_profit_prices,
-            "confidence_score": p.confidence_score,
-            "rationale": p.rationale,
-            "proposed_at": p.proposed_at.isoformat(),
-            "expires_at": p.expires_at.isoformat(),
-            "decision": decision,
-            "logged_at": _now_iso(),
-        }
 
     async def aclose(self) -> None:
         if self._owns_client and self._client is not None:

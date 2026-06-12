@@ -73,6 +73,7 @@ class ActiveProposal:
     proposed_at: datetime
     expires_at: datetime
     sl_distance: float  # abs distance entry -> SL; used by the circuit breaker
+    user_id: str = ""  # spec.metadata.author_user_id; agent_logs.user_id (RLS)
 
 
 # --------------------------------------------------------------------------- #
@@ -183,7 +184,31 @@ def _proposal_to_dict(p: ActiveProposal) -> dict[str, Any]:
         "proposed_at": p.proposed_at.isoformat(),
         "expires_at": p.expires_at.isoformat(),
         "sl_distance": p.sl_distance,
+        "user_id": p.user_id,
     }
+
+
+def _dict_to_proposal(d: dict[str, Any]) -> ActiveProposal:
+    """Inverse of `_proposal_to_dict` — rebuilds an ActiveProposal from hot state.
+
+    Used by boot reconciliation, which only has the StateStore's pending-proposal
+    payload (no in-memory ActiveProposal survives a restart).
+    """
+    return ActiveProposal(
+        proposal_id=d["proposal_id"],
+        strategy_id=d["strategy_id"],
+        symbol=d["symbol"],
+        direction=d["direction"],
+        entry_price=d["entry_price"],
+        stop_loss_price=d["stop_loss_price"],
+        take_profit_prices=d["take_profit_prices"],
+        confidence_score=d["confidence_score"],
+        rationale=d["rationale"],
+        proposed_at=datetime.fromisoformat(d["proposed_at"]),
+        expires_at=datetime.fromisoformat(d["expires_at"]),
+        sl_distance=d["sl_distance"],
+        user_id=d.get("user_id", ""),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -363,6 +388,7 @@ class AgentLoop:
             proposed_at=now,
             expires_at=expires_at,
             sl_distance=sl_dist,
+            user_id=self.spec.metadata.author_user_id,
         )
 
         await self.state_store.put_pending_proposal(
