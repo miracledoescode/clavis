@@ -16,6 +16,7 @@ from app.engine.agent_loop import (
     AgentLoop,
     ConditionEvaluator,
     DecisionLogger,
+    InMemoryAgentLoopRegistry,
     LoopState,
     Tick,
     TelegramNotifier,
@@ -650,6 +651,9 @@ def test_agent_loop_accepts_protocol_conformant_notifier():
         async def send_invalidation(self, proposal_id, reason):
             pass
 
+        async def answer_callback_query(self, callback_query_id, text=None):
+            pass
+
     assert isinstance(_FakeNotifier(), TelegramNotifier)
 
 
@@ -670,3 +674,32 @@ def test_agent_loop_accepts_protocol_conformant_evaluator():
             return False
 
     assert isinstance(_FakeEval(), ConditionEvaluator)
+
+
+# --------------------------------------------------------------------------- #
+# InMemoryAgentLoopRegistry                                                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_registry_finds_loop_owning_a_pending_proposal():
+    loop, _broker, store, _telegram, _logger = _make_loop()
+    store.get_pending_proposal = AsyncMock(
+        side_effect=lambda pid: {"strategy_id": loop.spec.id} if pid == "p1" else None
+    )
+
+    registry = InMemoryAgentLoopRegistry()
+    registry.register(loop)
+
+    assert run(registry.get_loop_for_proposal("p1")) is loop
+    assert run(registry.get_loop_for_proposal("missing")) is None
+
+
+def test_registry_unregister_removes_loop():
+    loop, _broker, store, _telegram, _logger = _make_loop()
+    store.get_pending_proposal = AsyncMock(return_value={"strategy_id": loop.spec.id})
+
+    registry = InMemoryAgentLoopRegistry()
+    registry.register(loop)
+    registry.unregister(loop.spec.id)
+
+    assert run(registry.get_loop_for_proposal("p1")) is None

@@ -19,7 +19,7 @@ callback_query.data and call loop.on_approval / loop.on_rejection.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -45,6 +45,29 @@ def _format_proposal(proposal: ActiveProposal) -> str:
         f"_{proposal.rationale}_\n\n"
         f"Expires in 5 min."
     )
+
+
+async def set_webhook(
+    token: str,
+    url: str,
+    secret_token: str = "",
+    client: Optional[httpx.AsyncClient] = None,
+) -> None:
+    """Register `url` as the Telegram Bot API webhook for `token`.
+
+    Idempotent — Telegram's setWebhook is safe to call repeatedly with the
+    same URL. Called once from main.py's lifespan on startup.
+    """
+    owns_client = client is None
+    c = client or httpx.AsyncClient(timeout=10.0)
+    try:
+        await c.post(
+            f"{_TELEGRAM_API}/bot{token}/setWebhook",
+            json={"url": url, "secret_token": secret_token or None},
+        )
+    finally:
+        if owns_client:
+            await c.aclose()
 
 
 class TelegramBotNotifier:
@@ -103,6 +126,14 @@ class TelegramBotNotifier:
                 "text": f"⚠️ Proposal invalidated: {reason}",
             },
         )
+
+    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None) -> None:
+        """Dismiss the inline keyboard's loading spinner after a tap is handled."""
+        c = await self._get()
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        await c.post(self._api("answerCallbackQuery"), json=payload)
 
     async def aclose(self) -> None:
         if self._owns_client and self._client is not None:
