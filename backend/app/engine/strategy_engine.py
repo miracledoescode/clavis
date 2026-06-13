@@ -122,7 +122,10 @@ async def list_strategies(
     c, owns = await _with_client(client)
     try:
         resp = await c.get(
-            _url("strategies?select=id,name,version,status,updated_at&order=updated_at.desc"),
+            _url(
+                "strategies?select=id,name,version,status,deployment_status,updated_at"
+                "&order=updated_at.desc"
+            ),
             headers=_headers(token),
         )
         resp.raise_for_status()
