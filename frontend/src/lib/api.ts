@@ -21,7 +21,19 @@ export interface StrategyRow {
   name: string;
   version: number;
   status?: string;
+  /** Live deployment state: "stopped" (default) | "deployed". */
+  deployment_status?: DeploymentStatus;
   updated_at?: string;
+}
+
+export type DeploymentStatus = "stopped" | "deployed";
+
+/** Deploy Hub status: durable deployment_status + optional in-process loop state. */
+export interface DeployStatus {
+  id: string;
+  deployment_status: DeploymentStatus;
+  /** Present only when a live runner is attached (null in local dev / CI). */
+  loop_state?: string | null;
 }
 
 /** Natural language -> block | clarification | incomplete | spec. */
@@ -86,4 +98,52 @@ export async function getBacktest(id: string): Promise<BacktestRow> {
   const res = await fetch(`${API_BASE_URL}/v1/backtests/${id}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error(`Backtest fetch failed (${res.status})`);
   return (await res.json()) as BacktestRow;
+}
+
+// --------------------------------------------------------------------------- //
+// Deploy Hub — deploy / kill-switch / status                                  //
+// The engine validates the spec and enforces the tier's live-Agent limit;     //
+// SL/TP stay broker-managed, so Stop never closes open positions.             //
+// --------------------------------------------------------------------------- //
+
+/** Deploy a saved strategy's live Agent (validate -> tier check -> go live). */
+export async function deployStrategy(strategyId: string): Promise<DeployStatus> {
+  const res = await fetch(`${API_BASE_URL}/v1/strategies/${strategyId}/deploy`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await deployErrorMessage(res, "Deploy failed"));
+  }
+  return (await res.json()) as DeployStatus;
+}
+
+/** Kill switch: stop the live Agent. Open positions stay broker-managed (SL/TP). */
+export async function stopStrategy(strategyId: string): Promise<DeployStatus> {
+  const res = await fetch(`${API_BASE_URL}/v1/strategies/${strategyId}/stop`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(await deployErrorMessage(res, "Stop failed"));
+  return (await res.json()) as DeployStatus;
+}
+
+/** Current deployment_status (+ in-process loop state when a runner is attached). */
+export async function getDeployStatus(strategyId: string): Promise<DeployStatus> {
+  const res = await fetch(`${API_BASE_URL}/v1/strategies/${strategyId}/status`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(await deployErrorMessage(res, "Status fetch failed"));
+  return (await res.json()) as DeployStatus;
+}
+
+/** Surface the engine's `detail` (e.g. tier-limit 403) instead of a bare code. */
+async function deployErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { detail?: string };
+    if (body?.detail) return body.detail;
+  } catch {
+    // non-JSON body; fall through to the generic message
+  }
+  return `${fallback} (${res.status})`;
 }
