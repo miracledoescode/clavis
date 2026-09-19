@@ -22,8 +22,8 @@ import httpx
 from pydantic import ValidationError
 
 from app import config
-from app.bridge.broker import MetaApiBrokerAdapter
-from app.bridge.price_feed import MetaApiPriceFeed
+from app.bridge.broker import MT5BridgeBrokerAdapter
+from app.bridge.price_feed import MT5BridgePriceFeed
 from app.contract.schemas import StrategySpec
 from app.engine.agent_loop import (
     AgentLoop,
@@ -84,8 +84,8 @@ class LiveRunner:
     # ------------------------------------------------------------------ #
 
     def _build_broker(self) -> Any:
-        return MetaApiBrokerAdapter(
-            config.METAAPI_TOKEN, config.METAAPI_ACCOUNT_ID, config.METAAPI_SYMBOL_SUFFIX or None
+        return MT5BridgeBrokerAdapter(
+            config.MT5_BRIDGE_URL, config.MT5_BRIDGE_SECRET, config.MT5_SYMBOL_SUFFIX or None
         )
 
     def _build_state_store(self) -> Any:
@@ -98,8 +98,10 @@ class LiveRunner:
         return SupabaseDecisionLogger()
 
     def _build_price_feed(self) -> Any:
-        return MetaApiPriceFeed(
-            config.METAAPI_TOKEN, config.METAAPI_ACCOUNT_ID, config.METAAPI_SYMBOL_SUFFIX or None
+        return MT5BridgePriceFeed(
+            config.MT5_BRIDGE_URL,
+            config.MT5_BRIDGE_SECRET,
+            poll_interval_seconds=config.MT5_POLL_INTERVAL_SECONDS,
         )
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -211,6 +213,10 @@ class LiveRunner:
         broker_positions = await self._broker.get_open_positions()
         pending_rows = await self._state_store.list_pending_proposals()
         pending_for_strategy = [p for p in pending_rows if p.get("strategy_id") == loop.spec.id]
+
+        pending_for_strategy = await self._resolve_self_recorded_executions(
+            loop, pending_for_strategy, broker_positions
+        )
         pending_by_id = {p["proposal_id"]: p for p in pending_for_strategy}
 
         expected = ExpectedState(
@@ -229,6 +235,39 @@ class LiveRunner:
         )
         for action in reconcile(broker_positions, expected, self._now()):
             await self._apply_action(loop, action, pending_by_id)
+
+    async def _resolve_self_recorded_executions(
+        self, loop: AgentLoop, pending: list[dict], broker_positions: list[Any]
+    ) -> list[dict]:
+        """Resolves proposals Clavis itself recorded as executed (position_id
+        known) before a possible crash — via our own idempotency-marker
+        record, NOT the broker echoing back a client id. MT5 can't reliably
+        round-trip a client id through its comment field the way MetaApi did
+        (see mt5-bridge/README.md), so this is the broker-agnostic way of
+        recognizing "this proposal already executed while we were down"
+        rather than wrongly invalidating it. Returns the remaining pending
+        rows (resolved ones removed) for the normal reconcile() pass.
+        """
+        broker_position_ids = {bp.position_id for bp in broker_positions}
+        remaining: list[dict] = []
+        for p in pending:
+            position_id = await self._state_store.get_marked_position_id(p["proposal_id"])
+            if position_id is None:
+                remaining.append(p)
+                continue
+
+            proposal = _dict_to_proposal(p)
+            await self._state_store.delete_pending_proposal(p["proposal_id"])
+            await self._logger.log_decision(proposal, "executed")
+            if position_id in broker_position_ids:
+                loop._open_position_id = position_id
+                loop._proposal = None
+                loop._state = LoopState.IN_POSITION
+                await self._state_store.set_open_position_flag(loop.spec.id, p["symbol"])
+            else:
+                # Position closed (SL/TP) in the same window we crashed in.
+                await self._state_store.clear_open_position_flag(loop.spec.id, p["symbol"])
+        return remaining
 
     async def _apply_action(
         self, loop: AgentLoop, action: ReconcileAction, pending_by_id: dict[str, dict]

@@ -69,9 +69,12 @@ class StateStore(Protocol):
     async def delete_pending_proposal(self, proposal_id: str) -> None: ...
 
     # Idempotency markers.
-    async def mark_idempotency_key(self, client_key: str) -> None: ...
+    async def mark_idempotency_key(
+        self, client_key: str, position_id: Optional[str] = None
+    ) -> None: ...
     async def is_idempotency_key_used(self, client_key: str) -> bool: ...
     async def used_idempotency_keys(self) -> set[str]: ...
+    async def get_marked_position_id(self, client_key: str) -> Optional[str]: ...
 
     # Open-position flags.
     async def set_open_position_flag(self, strategy_id: str, symbol: str) -> None: ...
@@ -125,8 +128,15 @@ class UpstashRedisStore:
         await self._client.srem(PENDING_PROPOSALS_SET, proposal_id)
 
     # -- idempotency markers --------------------------------------------------- #
-    async def mark_idempotency_key(self, client_key: str) -> None:
-        await self._client.set(idempotency_marker_key(client_key), "1")
+    async def mark_idempotency_key(
+        self, client_key: str, position_id: Optional[str] = None
+    ) -> None:
+        # The marker's VALUE doubles as a broker-agnostic proposal->position
+        # link (see get_marked_position_id): MT5 can't reliably echo a client
+        # id back the way MetaApi did, so boot reconciliation needs Clavis's
+        # own record of which position a proposal produced, made at the
+        # moment place_order succeeds — before any crash could lose it.
+        await self._client.set(idempotency_marker_key(client_key), position_id or "1")
         await self._client.sadd(USED_IDEMPOTENCY_KEYS_SET, client_key)
 
     async def is_idempotency_key_used(self, client_key: str) -> bool:
@@ -134,6 +144,14 @@ class UpstashRedisStore:
 
     async def used_idempotency_keys(self) -> set[str]:
         return set(await self._client.smembers(USED_IDEMPOTENCY_KEYS_SET))
+
+    async def get_marked_position_id(self, client_key: str) -> Optional[str]:
+        """The position_id recorded when this key was marked, or None if the
+        key is unmarked or was marked without one."""
+        raw = await self._client.get(idempotency_marker_key(client_key))
+        if raw is None or raw == "1":
+            return None
+        return raw
 
     # -- open-position flags ---------------------------------------------------- #
     async def set_open_position_flag(self, strategy_id: str, symbol: str) -> None:

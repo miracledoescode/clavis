@@ -309,7 +309,7 @@ class AgentLoop:
                 take_profit=proposal.take_profit_prices,
             )
 
-            await self.state_store.mark_idempotency_key(proposal_id)
+            await self.state_store.mark_idempotency_key(proposal_id, position.position_id)
             await self.state_store.delete_pending_proposal(proposal_id)
             # open-position flag stays set until the position closes
             await self.logger.log_decision(proposal, "approve")

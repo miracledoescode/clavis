@@ -1,144 +1,89 @@
-"""Tests for MetaApiPriceFeed.
+"""Tests for MT5BridgePriceFeed.
 
-MetaApi SDK is not installed in CI; the SDK import is intercepted by a fake
-injected into sys.modules so every test runs without a real connection
-(same technique as tests/test_broker.py).
+Uses httpx.MockTransport to stand in for the mt5-bridge service. The polling
+loop itself isn't exercised end-to-end (it just sleeps and repeats); instead
+`_poll_one` — the pure per-symbol unit — is called directly, which is what
+the loop calls on every tick.
 """
 from __future__ import annotations
 
 import asyncio
-import sys
-import types
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
-from app.bridge.price_feed import MetaApiPriceFeed, _PriceListener
-from app.engine.agent_loop import Tick
+from app.bridge.price_feed import MT5BridgePriceFeed
 
 run = asyncio.run
 
 
-# --------------------------------------------------------------------------- #
-# _PriceListener                                                               #
-# --------------------------------------------------------------------------- #
+def _feed(handler, symbol_suffix=None) -> MT5BridgePriceFeed:
+    client = httpx.AsyncClient(base_url="http://bridge.test", transport=httpx.MockTransport(handler))
+    return MT5BridgePriceFeed("http://bridge.test", "secret", symbol_suffix, client=client)
 
 
-def test_price_listener_pushes_tick_with_denormalized_symbol():
-    queue: asyncio.Queue[Tick] = asyncio.Queue()
-    listener = _PriceListener(queue, symbol_suffix=".m")
+def test_poll_one_normalizes_symbol_and_queues_tick():
+    captured = {}
 
-    run(listener.on_symbol_price_updated("0", {"symbol": "EURUSD.m", "bid": 1.1000, "ask": 1.1002}))
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["symbol"] = request.url.params["symbol"]
+        return httpx.Response(200, json={"symbol": "EURUSD.m", "bid": 1.1000, "ask": 1.1002})
 
-    tick = queue.get_nowait()
-    assert tick.symbol == "EURUSD"  # suffix stripped
+    feed = _feed(handler, symbol_suffix=".m")
+    run(feed._poll_one("EURUSD"))
+
+    assert captured["symbol"] == "EURUSD.m"
+    tick = feed._queue.get_nowait()
+    assert tick.symbol == "EURUSD"
     assert tick.bid == 1.1000
     assert tick.ask == 1.1002
 
 
-def test_price_listener_no_suffix_is_identity():
-    queue: asyncio.Queue[Tick] = asyncio.Queue()
-    listener = _PriceListener(queue)
+def test_poll_one_skips_unchanged_quote():
+    feed = _feed(lambda r: httpx.Response(200, json={"symbol": "EURUSD", "bid": 1.1, "ask": 1.1002}))
 
-    run(listener.on_symbol_price_updated("0", {"symbol": "GBPUSD", "bid": 1.27, "ask": 1.2702}))
+    run(feed._poll_one("EURUSD"))
+    run(feed._poll_one("EURUSD"))  # same quote again
 
-    tick = queue.get_nowait()
-    assert tick.symbol == "GBPUSD"
-
-
-# --------------------------------------------------------------------------- #
-# Fake MetaApi SDK                                                             #
-# --------------------------------------------------------------------------- #
+    assert feed._queue.qsize() == 1  # second poll produced no new tick
 
 
-def _make_fake_sdk(conn_mock: MagicMock) -> None:
-    account = MagicMock()
-    account.get_streaming_connection = AsyncMock(return_value=conn_mock)
+def test_poll_one_pushes_on_change():
+    quotes = iter([
+        {"symbol": "EURUSD", "bid": 1.1000, "ask": 1.1002},
+        {"symbol": "EURUSD", "bid": 1.1005, "ask": 1.1007},
+    ])
+    feed = _feed(lambda r: httpx.Response(200, json=next(quotes)))
 
-    account_api = MagicMock()
-    account_api.get_account = AsyncMock(return_value=account)
+    run(feed._poll_one("EURUSD"))
+    run(feed._poll_one("EURUSD"))
 
-    api_instance = MagicMock()
-    api_instance.metatrader_account_api = account_api
-
-    fake_class = MagicMock(return_value=api_instance)
-
-    module = types.ModuleType("metaapi_cloud_sdk")
-    module.MetaApi = fake_class  # type: ignore[attr-defined]
-    module.SynchronizationListener = object  # type: ignore[attr-defined]
-
-    sys.modules["metaapi_cloud_sdk"] = module
+    assert feed._queue.qsize() == 2
 
 
-def _make_conn() -> MagicMock:
-    conn = MagicMock()
-    conn.add_synchronization_listener = MagicMock()
-    conn.connect = AsyncMock()
-    conn.wait_synchronized = AsyncMock()
-    conn.subscribe_to_market_data = AsyncMock()
-    conn.close = AsyncMock()
-    return conn
+def test_poll_one_swallows_http_errors():
+    feed = _feed(lambda r: httpx.Response(404))
+    run(feed._poll_one("EURUSD"))  # must not raise
+    assert feed._queue.qsize() == 0
 
 
-@pytest.fixture(autouse=True)
-def clean_metaapi_module():
-    yield
-    sys.modules.pop("metaapi_cloud_sdk", None)
+def test_subscribe_starts_poll_task():
+    feed = _feed(lambda r: httpx.Response(200, json={"symbol": "EURUSD", "bid": 1.1, "ask": 1.1002}))
 
+    async def scenario():
+        assert feed._poll_task is None
+        await feed.subscribe({"EURUSD"})
+        assert feed._poll_task is not None
+        await feed.aclose()
 
-# --------------------------------------------------------------------------- #
-# connect / subscribe                                                          #
-# --------------------------------------------------------------------------- #
-
-
-def test_connect_establishes_streaming_connection():
-    conn = _make_conn()
-    _make_fake_sdk(conn)
-
-    feed = MetaApiPriceFeed("tok", "acc-id")
-    run(feed.connect())
-
-    conn.add_synchronization_listener.assert_called_once()
-    conn.connect.assert_awaited_once()
-    conn.wait_synchronized.assert_awaited_once()
-
-
-def test_connect_is_idempotent():
-    conn = _make_conn()
-    _make_fake_sdk(conn)
-
-    feed = MetaApiPriceFeed("tok", "acc-id")
-    run(feed.connect())
-    run(feed.connect())
-
-    conn.connect.assert_awaited_once()
-
-
-def test_subscribe_normalizes_symbols_with_suffix():
-    conn = _make_conn()
-    _make_fake_sdk(conn)
-
-    feed = MetaApiPriceFeed("tok", "acc-id", symbol_suffix=".m")
-    run(feed.connect())
-    run(feed.subscribe({"EURUSD"}))
-
-    conn.subscribe_to_market_data.assert_awaited_once_with("EURUSD.m")
-
-
-def test_subscribe_without_connect_raises():
-    feed = MetaApiPriceFeed("tok", "acc-id")
-    with pytest.raises(RuntimeError, match="connect"):
-        run(feed.subscribe({"EURUSD"}))
-
-
-# --------------------------------------------------------------------------- #
-# ticks / aclose                                                               #
-# --------------------------------------------------------------------------- #
+    run(scenario())
 
 
 def test_ticks_yields_queued_ticks():
-    feed = MetaApiPriceFeed("tok", "acc-id")
+    from datetime import datetime, timezone
+    from app.engine.agent_loop import Tick
+
+    feed = _feed(lambda r: httpx.Response(200, json={}))
     expected = Tick(symbol="EURUSD", bid=1.1, ask=1.1002, timestamp=datetime.now(timezone.utc))
     feed._queue.put_nowait(expected)
 
@@ -149,12 +94,13 @@ def test_ticks_yields_queued_ticks():
     assert run(first_tick()) is expected
 
 
-def test_aclose_closes_connection():
-    conn = _make_conn()
-    _make_fake_sdk(conn)
+def test_aclose_cancels_poll_task_and_closes_client():
+    feed = _feed(lambda r: httpx.Response(200, json={"symbol": "EURUSD", "bid": 1.1, "ask": 1.1002}))
 
-    feed = MetaApiPriceFeed("tok", "acc-id")
-    run(feed.connect())
-    run(feed.aclose())
+    async def scenario():
+        await feed.subscribe({"EURUSD"})
+        await feed.aclose()
 
-    conn.close.assert_awaited_once()
+    run(scenario())
+    assert feed._poll_task is None
+    assert feed._client.is_closed

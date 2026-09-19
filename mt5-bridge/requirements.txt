@@ -1,0 +1,7 @@
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+
+# Windows-only (win_amd64 wheels only) — this service runs on a Windows
+# machine next to the actual MT5 terminal. Does not install on Linux/macOS.
+MetaTrader5==5.0.6180

@@ -1,8 +1,9 @@
 # Clavis
 
 AI-native, no-code workspace where retail traders **design → build → backtest → deploy** autonomous
-trading **Agents** on MetaTrader 5 (via MetaApi). An Agent applies only the logic the trader authored —
-it never originates a recommendation the user did not encode.
+trading **Agents** on MetaTrader 5 (via a self-hosted MT5 bridge — see `mt5-bridge/`, not MetaApi). An
+Agent applies only the logic the trader authored — it never originates a recommendation the user did
+not encode.
 
 > Backtest and simulation results are historical and do not guarantee future performance.
 
@@ -10,10 +11,11 @@ it never originates a recommendation the user did not encode.
 
 ```
 clavis/
-  frontend/   Next.js 14 (App Router, TS, Tailwind v3, shadcn/ui) — host: Vercel
-  backend/    FastAPI engine (Pydantic v2, Docker) — host: Railway
-  db/         Supabase Postgres schema (core + billing): RLS, Vault, GDPR
-  CLAUDE.md   Engineering constitution — read this first
+  frontend/    Next.js 14 (App Router, TS, Tailwind v3, shadcn/ui) — host: Vercel
+  backend/     FastAPI engine (Pydantic v2, Docker) — host: Railway
+  mt5-bridge/  Self-hosted MT5 bridge (Windows VPS, free MetaTrader5 package) — see its README
+  db/          Supabase Postgres schema (core + billing): RLS, Vault, GDPR
+  CLAUDE.md    Engineering constitution — read this first
 ```
 
 The **Strategy JSON** is the single source of truth, mirrored in two languages:
@@ -25,7 +27,8 @@ languages — change one and change the other in the **same commit** (`schema_ve
 - Node.js ≥ 18 and npm (this repo was built with Node 22 / npm 10)
 - Python 3.11
 - Docker (optional — for the backend image)
-- A Supabase project, plus keys for MetaApi, Claude (Anthropic), Dodo Payments, Telegram, and Upstash
+- A Supabase project, a running `mt5-bridge/` instance (see its README), plus keys for Claude
+  (Anthropic), Dodo Payments, Telegram, and Upstash
 
 ## Frontend
 

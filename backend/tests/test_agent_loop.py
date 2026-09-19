@@ -462,7 +462,7 @@ def test_approval_within_window_places_order():
 
     assert loop.state == LoopState.IN_POSITION
     broker.place_order.assert_called_once()
-    store.mark_idempotency_key.assert_called_once_with(proposal_id)
+    store.mark_idempotency_key.assert_called_once_with(proposal_id, "pos-1")
     store.delete_pending_proposal.assert_called_with(proposal_id)
     logger.log_decision.assert_called_with(
         loop._proposal or logger.log_decision.call_args[0][0],
@@ -532,7 +532,7 @@ def test_concurrent_approval_calls_place_order_once():
     run(_race())
 
     broker.place_order.assert_called_once()
-    store.mark_idempotency_key.assert_called_once_with(proposal_id)
+    store.mark_idempotency_key.assert_called_once_with(proposal_id, "pos-1")
     assert loop.state == LoopState.IN_POSITION
 
 
