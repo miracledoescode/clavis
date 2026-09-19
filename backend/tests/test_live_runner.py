@@ -3,7 +3,7 @@
 All I/O is faked: broker/state_store/telegram/logger/price_feed are
 AsyncMocks (same style as tests/test_agent_loop.py's loop fixtures), and the
 Supabase `strategies` lookup goes through httpx.MockTransport (same pattern
-as tests/test_versioning.py). No real network/DB/Redis/MetaApi.
+as tests/test_versioning.py). No real network/DB/Redis/MT5 bridge.
 """
 from __future__ import annotations
 
@@ -132,6 +132,7 @@ def _make_fakes(
     state_store = MagicMock()
     state_store.list_pending_proposals = AsyncMock(return_value=pending_proposals or [])
     state_store.get_pending_proposal = AsyncMock(return_value=None)
+    state_store.get_marked_position_id = AsyncMock(return_value=None)
     state_store.set_open_position_flag = AsyncMock()
     state_store.clear_open_position_flag = AsyncMock()
     state_store.mark_idempotency_key = AsyncMock()
@@ -314,6 +315,73 @@ def test_reconcile_adopt_with_matching_pending_proposal_logs_executed():
             args = runner._logger.log_decision.call_args
             assert args.args[0].proposal_id == "p1"
             assert args.args[1] == "executed"
+        finally:
+            await runner.stop()
+            await client.aclose()
+
+    run(go())
+
+
+def test_reconcile_self_recorded_execution_logs_executed_without_broker_client_id():
+    """MT5 bridge positions never carry client_id (see mt5-bridge/README.md) —
+    this is the broker-agnostic path: Clavis's own idempotency-marker record
+    (proposal_id -> position_id, written at placement time) is what lets boot
+    reconciliation recognize the proposal executed, instead of wrongly
+    invalidating it."""
+    spec = _make_spec()
+    pending = _make_proposal_dict()
+    broker_positions = [
+        BrokerPosition(position_id="B1", symbol="EURUSD", direction="long", volume=0.01, client_id=None)
+    ]
+    rows = [{"id": "strat-1", "strategy_spec": spec.model_dump()}]
+
+    async def go():
+        client = _rest_client(rows)
+        runner = _make_runner(client, broker_positions=broker_positions, pending_proposals=[pending])
+        runner._state_store.get_marked_position_id = AsyncMock(
+            side_effect=lambda proposal_id: "B1" if proposal_id == "p1" else None
+        )
+        await runner.start()
+        try:
+            loop = runner._loops["strat-1"]
+            assert loop.state == LoopState.IN_POSITION
+            assert loop._open_position_id == "B1"
+            runner._state_store.delete_pending_proposal.assert_awaited_with("p1")
+            runner._telegram.send_invalidation.assert_not_called()
+            runner._logger.log_decision.assert_awaited_once()
+            args = runner._logger.log_decision.call_args
+            assert args.args[0].proposal_id == "p1"
+            assert args.args[1] == "executed"
+        finally:
+            await runner.stop()
+            await client.aclose()
+
+    run(go())
+
+
+def test_reconcile_self_recorded_close_out_during_downtime():
+    """The marked position closed (SL/TP) in the same window we crashed in —
+    resolved as executed (it did happen) and the open-position flag cleared,
+    without ever reaching the generic adopt/invalidate branches."""
+    spec = _make_spec()
+    pending = _make_proposal_dict()
+    rows = [{"id": "strat-1", "strategy_spec": spec.model_dump()}]
+
+    async def go():
+        client = _rest_client(rows)
+        runner = _make_runner(client, broker_positions=[], pending_proposals=[pending])
+        runner._state_store.get_marked_position_id = AsyncMock(
+            side_effect=lambda proposal_id: "B1" if proposal_id == "p1" else None
+        )
+        await runner.start()
+        try:
+            loop = runner._loops["strat-1"]
+            assert loop.state == LoopState.FLAT
+            runner._state_store.delete_pending_proposal.assert_awaited_with("p1")
+            runner._state_store.clear_open_position_flag.assert_awaited_with("strat-1", "EURUSD")
+            runner._telegram.send_invalidation.assert_not_called()
+            runner._logger.log_decision.assert_awaited_once()
+            assert runner._logger.log_decision.call_args.args[1] == "executed"
         finally:
             await runner.stop()
             await client.aclose()

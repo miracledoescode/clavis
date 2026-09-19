@@ -17,7 +17,7 @@ Side = Literal["long", "short"]
 
 @dataclass(frozen=True)
 class BrokerPosition:
-    """An open position as the broker (MetaApi) reports it — the source of truth."""
+    """An open position as the broker (via the mt5-bridge service) reports it — the source of truth."""
 
     position_id: str  # broker ticket / position id
     symbol: str

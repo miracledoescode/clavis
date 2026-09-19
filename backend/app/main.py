@@ -11,7 +11,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 
 from app import config
-from app.api import configure_cors, deploy_router, router, telegram_router
+from app.api import configure_cors, copilot_router, deploy_router, router, telegram_router
 from app.api.routers.deploy import get_live_runner
 from app.api.routers.telegram import get_agent_loop_registry
 from app.engine.live_runner import LiveRunner
@@ -57,3 +57,6 @@ app.include_router(deploy_router)
 
 # Telegram webhook (Co-Pilot Approve/Reject). Telegram-authenticated, not under /v1.
 app.include_router(telegram_router)
+
+# Co-Pilot web surface (list proposals/decisions, approve/reject), under /v1/copilot.
+app.include_router(copilot_router)

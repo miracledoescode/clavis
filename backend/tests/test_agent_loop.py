@@ -462,7 +462,7 @@ def test_approval_within_window_places_order():
 
     assert loop.state == LoopState.IN_POSITION
     broker.place_order.assert_called_once()
-    store.mark_idempotency_key.assert_called_once_with(proposal_id)
+    store.mark_idempotency_key.assert_called_once_with(proposal_id, "pos-1")
     store.delete_pending_proposal.assert_called_with(proposal_id)
     logger.log_decision.assert_called_with(
         loop._proposal or logger.log_decision.call_args[0][0],
@@ -507,6 +507,33 @@ def test_approval_idempotency_guard_suppresses_duplicate():
     # Key already used — simulate double callback
     run(loop.on_approval(proposal_id, used_keys={proposal_id}))
     broker.place_order.assert_not_called()
+
+
+def test_concurrent_approval_calls_place_order_once():
+    """Simulates Telegram and the web Co-Pilot UI racing to approve the same
+    proposal. Without the per-loop lock, both coroutines could pass the
+    SEEKING-state check before either finishes and both call place_order."""
+    loop, broker, store, *_ = _make_loop(match=True)
+    run(loop.on_tick(_make_tick()))
+    proposal_id = loop._proposal.proposal_id
+
+    async def _slow_place_order(**kwargs):
+        await asyncio.sleep(0)  # yield control, mimicking real network I/O
+        return MagicMock(position_id="pos-1")
+
+    broker.place_order = AsyncMock(side_effect=_slow_place_order)
+
+    async def _race():
+        await asyncio.gather(
+            loop.on_approval(proposal_id, used_keys=set()),
+            loop.on_approval(proposal_id, used_keys=set()),
+        )
+
+    run(_race())
+
+    broker.place_order.assert_called_once()
+    store.mark_idempotency_key.assert_called_once_with(proposal_id, "pos-1")
+    assert loop.state == LoopState.IN_POSITION
 
 
 def test_approval_wrong_proposal_id_ignored():

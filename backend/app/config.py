@@ -47,12 +47,18 @@ CORS_ALLOW_ORIGINS: list[str] = _split_origins(
 # PostgREST base for engine-mediated writes under the user's JWT.
 SUPABASE_REST_URL: str = f"{SUPABASE_URL}/rest/v1" if SUPABASE_URL else ""
 
-# --- MetaApi (broker bridge — internal only; no public route) --------------- #
-METAAPI_TOKEN: str = os.getenv("METAAPI_TOKEN", "")
-METAAPI_ACCOUNT_ID: str = os.getenv("METAAPI_ACCOUNT_ID", "")
+# --- MT5 bridge (self-hosted; internal only; no public route) --------------- #
+# NOT MetaApi (a paid, per-account SaaS). mt5-bridge/ is a small self-hosted
+# service using MetaQuotes' free MetaTrader5 Python package, run on a Windows
+# machine next to the actual MT5 terminal — see mt5-bridge/README.md.
+MT5_BRIDGE_URL: str = os.getenv("MT5_BRIDGE_URL", "")
+MT5_BRIDGE_SECRET: str = os.getenv("MT5_BRIDGE_SECRET", "")
 # Broker-specific symbol suffix, e.g. ".m" for Exness / Justmarkets.
 # Empty string means no suffix (raw canonical symbols sent to the broker).
-METAAPI_SYMBOL_SUFFIX: str = os.getenv("METAAPI_SYMBOL_SUFFIX", "")
+MT5_SYMBOL_SUFFIX: str = os.getenv("MT5_SYMBOL_SUFFIX", "")
+# MT5's local API has no streaming/push mechanism — the price feed polls the
+# bridge per symbol at this interval instead.
+MT5_POLL_INTERVAL_SECONDS: float = float(os.getenv("MT5_POLL_INTERVAL_SECONDS", "1.0"))
 
 # --- Upstash Redis (hot state only; see engine/hot_state.py) ---------------- #
 UPSTASH_REDIS_REST_URL: str = os.getenv("UPSTASH_REDIS_REST_URL", "")
@@ -80,8 +86,8 @@ def live_runner_configured() -> bool:
     passing unchanged.
     """
     return bool(
-        METAAPI_TOKEN
-        and METAAPI_ACCOUNT_ID
+        MT5_BRIDGE_URL
+        and MT5_BRIDGE_SECRET
         and UPSTASH_REDIS_REST_URL
         and UPSTASH_REDIS_REST_TOKEN
         and TELEGRAM_BOT_TOKEN

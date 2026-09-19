@@ -36,8 +36,7 @@ achievable in under 30 minutes on first use.
 1. **RLS on every table.** The browser uses the anon/authenticated key and sees
    only its own rows. The engine uses the service role key. No exceptions.
 1. **Credentials are never stored raw.** Metadata + a Supabase Vault reference,
-   service-role decryption only, bound to our servers via MetaApi IP
-   whitelisting. KMS envelope encryption wraps the Vault secret from V0 — not a
+   service-role decryption only. KMS envelope encryption wraps the Vault secret from V0 — not a
    post-MVP hardening — because live is paid from day one and real credentials
    are handled in week one, so the envelope is in place from the start.
 1. **The word is “Agent”, never “bot”.** Agents make judgments and explain
@@ -94,8 +93,16 @@ every setup's direction before a spec is considered authored.
 
 - FastAPI (Python), Docker, host: Railway
 - VectorBT for backtests (Apache 2.0 + Commons Clause; fine as a component)
-- MetaApi (cloud MT4/MT5, no Windows VPS) for execution; MetaStats for the
-  trader profile. SL/TP set on the order at the broker.
+- MT5 execution via a **self-hosted bridge** (`mt5-bridge/`), NOT MetaApi — a
+  paid, per-account SaaS this project deliberately avoids on cost grounds.
+  `mt5-bridge/` is a small service using MetaQuotes' free, official
+  `MetaTrader5` Python package, run on a Windows VPS next to the actual MT5
+  terminal (the package only ships Windows wheels and only talks to a
+  terminal on the same machine — see `mt5-bridge/README.md`). The main
+  engine's `bridge/broker.py` and `bridge/price_feed.py` are plain HTTP
+  clients against it. SL/TP set on the order at the broker either way. No
+  MetaStats: the Trader Profile computes directly from `execution_history` /
+  `agent_logs` instead of a MetaApi-provided descriptive stats product.
 - CCXT for crypto exchange integration — **post-MVP**, not V0.
 
 **Data**
@@ -145,9 +152,10 @@ clavis/
         copilot.py           # approve/reject, RLHF log writes
         backtest_worker.py   # VectorBT
         tier_enforcer.py     # tier gating + billing checks
-      bridge/                # MT5/MetaApi bridge — INTERNAL ONLY, no public route
+      bridge/                # MT5 bridge HTTP client — INTERNAL ONLY, no public route
         symbol_normalizer.py # handles broker suffixes e.g. EURUSD.m
       integrations/          # claude, telegram, dodo
+  mt5-bridge/                # self-hosted MT5 bridge service (Windows VPS; see its README)
   db/
     clavis_v0_schema.sql     # core tables, RLS, Vault pattern, GDPR fn
     clavis_billing_schema.sql# subscriptions + billing_events (Dodo)
@@ -186,7 +194,7 @@ exists. Do not build them early.
 1. Circuit breaker: if price slips past 50% of the stop distance while pending,
    auto-invalidate.
 1. On Approve, verify the window is STILL valid **before** sending, then place
-   the order via MetaApi with SL and TP at the broker.
+   the order via the MT5 bridge with SL and TP at the broker.
 1. Write the decision (approve / reject-with-reason-chip / invalidated /
    executed) to `agent_logs`; execution outcome to `execution_history`.
 
@@ -200,8 +208,8 @@ monitoring, state drift, and double execution.** This is the contract the live
 loop (slice 4) is built against; the pure parts already exist and are tested.
 
 **Three layers of truth.**
-- The **broker** (via MetaApi) is AUTHORITATIVE for what positions and orders
-  actually exist. When records disagree, the broker wins.
+- The **broker** (via the MT5 bridge) is AUTHORITATIVE for what positions and
+  orders actually exist. When records disagree, the broker wins.
 - **Postgres** is the durable record (strategies, versions, `agent_logs`,
   `execution_history`).
 - **Upstash Redis** holds HOT state only: pending proposals + their validity
@@ -225,7 +233,13 @@ in).
 PERSISTED before the send (`engine/idempotency.py`; Redis marker via StateStore).
 On restart, never resend a key that already produced a broker order;
 `should_send(proposal, used_keys)` is the gate. This is what prevents double
-execution.
+execution. Because MT5's `comment` field can't reliably round-trip a full
+`proposal_id` (brokers commonly truncate it well under its 31-char limit —
+see `mt5-bridge/README.md`), the idempotency marker's VALUE also records the
+resulting `position_id` the moment `place_order` succeeds
+(`StateStore.mark_idempotency_key(key, position_id)`), so boot reconciliation
+can recognize "this proposal already executed" from Clavis's OWN record
+rather than depending on the broker echoing the key back.
 
 **The live process is disposable.** ZERO authoritative state in process memory —
 everything needed to recover lives in the broker, Postgres, and Redis, so any
@@ -233,9 +247,9 @@ instance can be killed and replaced mid-flight. Any V1 ML runs in a SEPARATE
 worker, NEVER inside the execution loop.
 
 Interfaces the live loop implements against (stubs until slice 4):
-`bridge/broker.py::BrokerAdapter` (MetaApi; internal only — `place_order`
-requires SL/TP) and `engine/hot_state.py::StateStore` (Upstash Redis; the Redis
-key schema is documented there).
+`bridge/broker.py::BrokerAdapter` (self-hosted MT5 bridge; internal only —
+`place_order` requires SL/TP) and `engine/hot_state.py::StateStore` (Upstash
+Redis; the Redis key schema is documented there).
 
 -----
 
@@ -283,7 +297,9 @@ minimum data gate. Below the gate, do NOT surface archetypes at all. Build
 nothing for it now — this records the constraint.
 
 Distinguish clearly:
-- **Trader Profile** = descriptive MetaStats. V0, valid at ANY sample size.
+- **Trader Profile** = descriptive stats computed directly from
+  `execution_history` / `agent_logs` (no MetaStats — that's a MetaApi
+  product this project doesn't use). V0, valid at ANY sample size.
 - **DNA Engine** = ML clustering into archetypes. V1, GATED.
 
 Gate: a configurable minimum of closed trades (default **300**; a heuristic
@@ -327,8 +343,9 @@ carry the in-UI disclaimer.
   between them as a build break.
 - Prefer boring, battle-tested choices. This is an MVP: optimize for time to
   learning, not architectural elegance. Do not build the post-revenue ephemeral
-  container execution architecture now — MetaApi at beta stage is correct until
-  its economics force the change.
+  container execution architecture now — the self-hosted `mt5-bridge/` on a
+  single Windows VPS is correct until scale (multi-account, multi-region)
+  forces the change.
 - Validate every inbound `StrategySpec` against `schemas.py` before it reaches
   the agent loop. Unvalidated strategies never run.
 - Write tests around the contract, the validity-window check, the circuit

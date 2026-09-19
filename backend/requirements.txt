@@ -8,8 +8,10 @@ httpx==0.28.1
 # Hot state (StateStore): pending proposals, idempotency markers, open-position flags
 upstash-redis==1.7.0
 
-# Broker bridge
-metaapi-cloud-sdk==17.4.0
+# Broker bridge: no package here — the MT5 broker adapter (bridge/broker.py)
+# and price feed (bridge/price_feed.py) are plain httpx clients against the
+# self-hosted mt5-bridge/ service. See mt5-bridge/requirements.txt for its
+# (Windows-only) MetaTrader5 package dependency.
 
 # Backtest engine
 numpy==1.26.4
