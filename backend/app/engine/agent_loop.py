@@ -7,6 +7,7 @@ parts are fully unit-testable without network access.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -251,6 +252,11 @@ class AgentLoop:
         self._proposal: Optional[ActiveProposal] = None
         self._open_position_id: Optional[str] = None
         self._cooldown_until: Optional[datetime] = None
+        # Guards on_approval/on_rejection: Telegram and the web Co-Pilot UI can
+        # both call into the same proposal_id concurrently. Both methods await
+        # multiple times before their state mutation completes, so without this
+        # lock two racing callers could both pass the SEEKING-state check first.
+        self._decision_lock = asyncio.Lock()
 
     @property
     def state(self) -> LoopState:
@@ -275,59 +281,63 @@ class AgentLoop:
         """Called by the Telegram callback handler when the trader approves.
 
         Re-checks the validity window before placing. Idempotency guard prevents
-        double execution on duplicate callbacks.
+        double execution on duplicate callbacks. Lock-guarded: Telegram and the
+        web Co-Pilot UI may both race to act on the same proposal_id.
         """
-        if self._state != LoopState.SEEKING:
-            return
-        proposal = self._proposal
-        if proposal is None or proposal.proposal_id != proposal_id:
-            return
+        async with self._decision_lock:
+            if self._state != LoopState.SEEKING:
+                return
+            proposal = self._proposal
+            if proposal is None or proposal.proposal_id != proposal_id:
+                return
 
-        now = self._now()
-        if now >= proposal.expires_at:
-            await self._invalidate(proposal, "approval arrived after validity window expired")
-            return
+            now = self._now()
+            if now >= proposal.expires_at:
+                await self._invalidate(proposal, "approval arrived after validity window expired")
+                return
 
-        if not should_send({"proposal_id": proposal_id}, used_keys):
-            return  # idempotency: client key already produced a broker order
+            if not should_send({"proposal_id": proposal_id}, used_keys):
+                return  # idempotency: client key already produced a broker order
 
-        position = await self.broker.place_order(
-            client_id=proposal_id,
-            symbol=proposal.symbol,
-            direction=proposal.direction,
-            # V0: minimum lot. V1 will size from PerTradeRisk + live account balance.
-            volume=0.01,
-            stop_loss=proposal.stop_loss_price,
-            take_profit=proposal.take_profit_prices,
-        )
+            position = await self.broker.place_order(
+                client_id=proposal_id,
+                symbol=proposal.symbol,
+                direction=proposal.direction,
+                # V0: minimum lot. V1 will size from PerTradeRisk + live account balance.
+                volume=0.01,
+                stop_loss=proposal.stop_loss_price,
+                take_profit=proposal.take_profit_prices,
+            )
 
-        await self.state_store.mark_idempotency_key(proposal_id)
-        await self.state_store.delete_pending_proposal(proposal_id)
-        # open-position flag stays set until the position closes
-        await self.logger.log_decision(proposal, "approve")
+            await self.state_store.mark_idempotency_key(proposal_id)
+            await self.state_store.delete_pending_proposal(proposal_id)
+            # open-position flag stays set until the position closes
+            await self.logger.log_decision(proposal, "approve")
 
-        self._open_position_id = position.position_id
-        self._proposal = None
-        self._state = LoopState.IN_POSITION
+            self._open_position_id = position.position_id
+            self._proposal = None
+            self._state = LoopState.IN_POSITION
 
     async def on_rejection(
         self, proposal_id: str, reason: Optional[str] = None
     ) -> None:
-        """Called by the Telegram callback handler when the trader rejects."""
-        if self._state != LoopState.SEEKING:
-            return
-        proposal = self._proposal
-        if proposal is None or proposal.proposal_id != proposal_id:
-            return
+        """Called by the Telegram callback handler when the trader rejects.
+        Lock-guarded: see on_approval."""
+        async with self._decision_lock:
+            if self._state != LoopState.SEEKING:
+                return
+            proposal = self._proposal
+            if proposal is None or proposal.proposal_id != proposal_id:
+                return
 
-        await self.state_store.delete_pending_proposal(proposal_id)
-        await self.state_store.clear_open_position_flag(
-            self.spec.id, proposal.symbol
-        )
-        await self.logger.log_decision(proposal, "reject", reject_reason=reason)
+            await self.state_store.delete_pending_proposal(proposal_id)
+            await self.state_store.clear_open_position_flag(
+                self.spec.id, proposal.symbol
+            )
+            await self.logger.log_decision(proposal, "reject", reject_reason=reason)
 
-        self._proposal = None
-        self._state = LoopState.FLAT
+            self._proposal = None
+            self._state = LoopState.FLAT
 
     async def on_position_closed(self, position_id: str) -> None:
         """Called when the broker reports the position is closed (SL/TP or manual)."""

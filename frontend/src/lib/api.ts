@@ -1,4 +1,4 @@
-import type { StrategySpec } from "@/contract/types";
+import type { AgentProposal, AgentDecisionLog, RejectReasonChip, StrategySpec } from "@/contract/types";
 import type { BacktestRow } from "@/modules/backtest-lab/types";
 import type { ParseResult } from "@/modules/rule-builder/types";
 import { supabase } from "@/lib/supabase";
@@ -146,4 +146,68 @@ async function deployErrorMessage(res: Response, fallback: string): Promise<stri
     // non-JSON body; fall through to the generic message
   }
   return `${fallback} (${res.status})`;
+}
+
+// --------------------------------------------------------------------------- //
+// Co-Pilot — approve/reject the live loop's proposals + the decision history  //
+// (the RLHF capture surface CLAUDE.md calls "the moat"). Approve/reject route //
+// through the SAME AgentLoop.on_approval/on_rejection path Telegram uses — no //
+// separate execution logic.                                                  //
+// --------------------------------------------------------------------------- //
+
+/** A pending proposal awaiting the trader's decision. */
+export interface PendingProposal {
+  proposal_id: string;
+  strategy_id: string;
+  proposal: AgentProposal;
+  user_decision: "pending";
+  confidence_score: number;
+  logged_at: string;
+}
+
+/** A decided proposal (approve / reject / invalidated / executed). */
+export interface DecisionLogRow extends AgentDecisionLog {
+  proposal_id: string;
+  strategy_id: string;
+}
+
+export async function listPendingProposals(): Promise<PendingProposal[]> {
+  const res = await fetch(`${API_BASE_URL}/v1/copilot/proposals`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(await deployErrorMessage(res, "Could not load proposals"));
+  return (await res.json()) as PendingProposal[];
+}
+
+export async function listDecisionHistory(limit = 50, offset = 0): Promise<DecisionLogRow[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/v1/copilot/decisions?limit=${limit}&offset=${offset}`,
+    { headers: await authHeaders() },
+  );
+  if (!res.ok) throw new Error(await deployErrorMessage(res, "Could not load decision history"));
+  return (await res.json()) as DecisionLogRow[];
+}
+
+export async function approveProposal(
+  proposalId: string,
+): Promise<{ proposal_id: string; status: string }> {
+  const res = await fetch(`${API_BASE_URL}/v1/copilot/proposals/${proposalId}/approve`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(await deployErrorMessage(res, "Approve failed"));
+  return (await res.json()) as { proposal_id: string; status: string };
+}
+
+export async function rejectProposal(
+  proposalId: string,
+  reasonChip?: RejectReasonChip,
+): Promise<{ proposal_id: string; status: string }> {
+  const res = await fetch(`${API_BASE_URL}/v1/copilot/proposals/${proposalId}/reject`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ reason_chip: reasonChip ?? null }),
+  });
+  if (!res.ok) throw new Error(await deployErrorMessage(res, "Reject failed"));
+  return (await res.json()) as { proposal_id: string; status: string };
 }

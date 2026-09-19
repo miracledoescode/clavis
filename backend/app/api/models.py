@@ -10,7 +10,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.contract.schemas import StrategySpec
+from app.contract.schemas import RejectReasonChip, StrategySpec
 
 
 class ParseRequest(BaseModel):
@@ -32,3 +32,7 @@ class BacktestRequest(BaseModel):
 
     strategy_id: str
     params: Optional[dict] = None
+
+
+class RejectProposalRequest(BaseModel):
+    reason_chip: Optional[RejectReasonChip] = None

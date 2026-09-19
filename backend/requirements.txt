@@ -9,7 +9,7 @@ httpx==0.28.1
 upstash-redis==1.7.0
 
 # Broker bridge
-metaapi-cloud-sdk==17.4.0
+metaapi-cloud-sdk==29.1.1
 
 # Backtest engine
 numpy==1.26.4

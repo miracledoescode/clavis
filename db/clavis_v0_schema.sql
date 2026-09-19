@@ -216,3 +216,9 @@ begin
   --    now-anonymized user shell.
 end;
 $$;
+
+-- SECURITY DEFINER functions are exposed over PostgREST RPC by default. This
+-- one takes an arbitrary target_user_id with no ownership check inside, so it
+-- must never be callable by anon/authenticated — GDPR deletion is engine-
+-- mediated (service role) only, never a direct client RPC.
+revoke execute on function public.anonymize_user(uuid) from public, anon, authenticated;
